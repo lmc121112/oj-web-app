@@ -62,7 +62,10 @@ export default function SubmissionsPage() {
   }, []);
 
   const handleCaseClick = (sub: any, tc: any) => {
-    const isAdmin = user?.role === 'admin';
+    // Chưa đăng nhập -> không được xem chi tiết test case
+    if (!user) return;
+
+    const isAdmin = user.role === 'admin';
     const isHidden = sub.problems?.hide_tests && !isAdmin;
 
     if (tc.verdict === 'G' || sub.verdict === 'CE' || isHidden) {
@@ -77,8 +80,11 @@ export default function SubmissionsPage() {
 
   // Lọc danh sách bài nộp theo trạng thái đăng nhập và tab đang chọn
   const displayedSubs = subs.filter((s) => {
-    if (!user) return true; // Chưa đăng nhập thì hiện danh sách chung
-    if (s.username === 'guest' || !s.username) return false; // Đã đăng nhập thì ẩn bài của guest
+    // Chưa đăng nhập -> chỉ nhìn thấy bài nộp của guest
+    if (!user) return s.username === 'guest' || !s.username;
+
+    // Đã đăng nhập -> ẩn bài của guest
+    if (s.username === 'guest' || !s.username) return false;
     if (filterTab === 'mine') return s.username === user.username;
     return true; // Tab "Tất cả bài nộp" (của các tài khoản đã đăng ký)
   });
@@ -128,7 +134,9 @@ export default function SubmissionsPage() {
       </div>
 
       <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '16px' }}>
-        Bấm vào từng ô màu của test case (khi đã chấm xong và không bị ẩn test) để xem Input, Output, Thời gian chạy và Judge Response.
+        {user
+          ? 'Bấm vào từng ô màu của test case (khi đã chấm xong và không bị ẩn test) để xem Input, Output, Thời gian chạy và Judge Response.'
+          : 'Bạn đang xem ở chế độ khách (chỉ hiển thị bài nộp của guest). Vui lòng đăng nhập để xem bài nộp cá nhân và chi tiết từng test case.'}
       </p>
 
       <div style={{ overflowX: 'auto' }}>
@@ -187,13 +195,17 @@ export default function SubmissionsPage() {
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
                           {tcs.map((tc: any) => {
                             const boxColor = getVerdictColor(tc.verdict, 'Finished');
-                            const clickable = tc.verdict !== 'G' && !isHidden;
+                            const clickable = Boolean(user) && tc.verdict !== 'G' && !isHidden;
                             return (
                               <button
                                 key={tc.test_num}
                                 type="button"
                                 onClick={() => handleCaseClick(s, tc)}
-                                title={`Test #${tc.test_num}: ${tc.verdict} (${tc.time_ms} ms)`}
+                                title={
+                                  !user
+                                    ? `Test #${tc.test_num}: ${tc.verdict} (Đăng nhập để xem chi tiết)`
+                                    : `Test #${tc.test_num}: ${tc.verdict} (${tc.time_ms} ms)`
+                                }
                                 style={{
                                   width: '32px',
                                   height: '28px',
@@ -231,7 +243,7 @@ export default function SubmissionsPage() {
       </div>
 
       {/* Modal Chi tiết từng Test Case */}
-      {selectedCase && (
+      {user && selectedCase && (
         <div
           style={{
             position: 'fixed',
