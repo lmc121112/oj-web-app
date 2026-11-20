@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { supabase } from '../../../lib/supabase';
+import MathText from '../../../components/MathText';
 
 // Tải Ace Editor ở phía Client để tránh lỗi SSR trên Next.js
 const AceEditor = dynamic(
@@ -161,7 +162,7 @@ export default function ProblemWorkspacePage() {
           </span>
         </div>
         <hr style={{ border: 'none', borderTop: '1px solid #e2e8f0', margin: '16px 0' }} />
-        <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.65', fontSize: '15px' }}>{problem.statement}</div>
+        <MathText text={problem.statement} />
       </div>
 
       {/* Khung soạn thảo Ace Editor & Nút Nộp Bài (Yêu cầu 7, 8) */}
