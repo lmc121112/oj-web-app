@@ -390,6 +390,7 @@ export default function AdminDashboardPage() {
           { id: 'contests', label: '2. Contest & Phân quyền' },
           { id: 'problems', label: '3. Bài tập' },
           { id: 'testcases', label: '4. Quản lý Test cases' },
+          { id: 'danger', label: '5. Danger Zone' },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -400,8 +401,20 @@ export default function AdminDashboardPage() {
               border: 'none',
               fontWeight: 'bold',
               cursor: 'pointer',
-              backgroundColor: activeTab === tab.id ? '#0f172a' : '#e2e8f0',
-              color: activeTab === tab.id ? '#fff' : '#0f172a',
+              backgroundColor:
+                activeTab === tab.id
+                  ? tab.id === 'danger'
+                    ? '#dc2626'
+                    : '#0f172a'
+                  : tab.id === 'danger'
+                  ? '#fee2e2'
+                  : '#e2e8f0',
+              color:
+                activeTab === tab.id
+                  ? '#fff'
+                  : tab.id === 'danger'
+                  ? '#dc2626'
+                  : '#0f172a',
             }}
           >
             {tab.label}
@@ -873,7 +886,7 @@ export default function AdminDashboardPage() {
           </table>
         </div>
       )}
-      
+
       {/* ================= TAB 5: DANGER ZONE ================= */}
       {activeTab === 'danger' && (
         <div
