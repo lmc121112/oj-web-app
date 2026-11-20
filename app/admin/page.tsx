@@ -5,7 +5,7 @@ import { formatGMT7, localGMT7ToISO, isoToLocalGMT7Input } from '../../lib/time'
 
 export default function AdminDashboardPage() {
   const [user, setUser] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'users' | 'contests' | 'problems' | 'testcases'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'contests' | 'problems' | 'testcases' | 'danger'>('users');
 
   // --- DỮ LIỆU CHUNG ---
   const [usersList, setUsersList] = useState<any[]>([]);
@@ -43,6 +43,9 @@ export default function AdminDashboardPage() {
   const [tcOrder, setTcOrder] = useState<number>(1);
   const [tcInput, setTcInput] = useState('');
   const [tcOutput, setTcOutput] = useState('');
+
+  // --- TAB 5: DANGER ZONE ---
+  const [isResettingOj, setIsResettingOj] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('oj_user');
@@ -353,6 +356,27 @@ export default function AdminDashboardPage() {
       }
     }
     e.target.value = '';
+  };
+
+  // ==================== HANDLER TAB 5: DANGER ZONE ====================
+  const handleResetEntireOj = async () => {
+    const confirmText = prompt(
+      'CẢNH BÁO NGUY HIỂM: Thao tác này sẽ xóa vĩnh viễn toàn bộ tài khoản (kể cả Admin hiện tại), Contest, đề bài, lịch sử bài nộp và reset toàn bộ ID về 1.\n\nChỉ giữ lại đề bài + 2 test case của "aplusb" và template các ngôn ngữ lập trình.\n\nNhập chính xác chữ "RESET" để xác nhận:'
+    );
+    if (confirmText !== 'RESET') return;
+
+    setIsResettingOj(true);
+    const { error } = await supabase.rpc('reset_entire_oj');
+    setIsResettingOj(false);
+
+    if (error) {
+      alert('Lỗi khi reset toàn bộ OJ: ' + error.message);
+      return;
+    }
+
+    localStorage.removeItem('oj_user');
+    alert('Đã reset toàn bộ OJ thành công! Hệ thống sẽ chuyển về trang chủ để khởi tạo lại Admin.');
+    window.location.href = '/';
   };
 
   return (
@@ -847,6 +871,42 @@ export default function AdminDashboardPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      
+      {/* ================= TAB 5: DANGER ZONE ================= */}
+      {activeTab === 'danger' && (
+        <div
+          style={{
+            backgroundColor: '#fef2f2',
+            border: '2px solid #fca5a5',
+            borderRadius: '8px',
+            padding: '20px',
+          }}
+        >
+          <h3 style={{ marginTop: 0, color: '#dc2626' }}>Danger Zone</h3>
+          <p style={{ fontSize: '14px', color: '#334155', lineHeight: 1.6, marginBottom: '16px' }}>
+            Reset toàn bộ hệ thống Online Judge về trạng thái ban đầu: xóa sạch toàn bộ tài khoản (bao gồm cả Admin hiện tại),
+            Contest, bài tập, lịch sử bài nộp và đặt lại toàn bộ bộ đếm <b>ID</b> về <b>1</b>. Hệ thống chỉ giữ lại đề bài + 2 test case
+            của bài <code>aplusb</code> và template của các ngôn ngữ lập trình.
+          </p>
+          <button
+            type="button"
+            disabled={isResettingOj}
+            onClick={handleResetEntireOj}
+            style={{
+              backgroundColor: '#dc2626',
+              color: '#fff',
+              border: 'none',
+              padding: '10px 20px',
+              borderRadius: '6px',
+              fontWeight: 'bold',
+              cursor: isResettingOj ? 'not-allowed' : 'pointer',
+              opacity: isResettingOj ? 0.7 : 1,
+            }}
+          >
+            {isResettingOj ? 'Đang reset hệ thống...' : 'Reset toàn bộ OJ'}
+          </button>
         </div>
       )}
     </div>
