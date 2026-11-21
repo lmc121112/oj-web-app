@@ -1,24 +1,18 @@
 'use client';
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { supabase } from '../lib/supabase';
 import './globals.css';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { supabase } from '../lib/supabase';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
   const [user, setUser] = useState<any>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState('');
 
   useEffect(() => {
-    // Dọn dẹp class/storage dark mode cũ nếu còn sót
-    document.documentElement.classList.remove('dark');
-    localStorage.removeItem('oj_theme');
-
     const saved = localStorage.getItem('oj_user');
     if (saved) {
       try {
@@ -26,68 +20,68 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       } catch {}
     }
 
-    const handleOpenModal = () => {
-      setAuthMode('login');
+    // Đảm bảo xóa class dark nếu trình duyệt còn lưu từ trước
+    document.documentElement.classList.remove('dark');
+    localStorage.removeItem('oj_theme');
+
+    const handleOpenLogin = () => {
+      setIsRegisterMode(false);
+      setAuthError('');
       setShowAuthModal(true);
     };
-    window.addEventListener('open-login-modal', handleOpenModal);
-    return () => window.removeEventListener('open-login-modal', handleOpenModal);
+    window.addEventListener('open-login-modal', handleOpenLogin);
+    return () => window.removeEventListener('open-login-modal', handleOpenLogin);
   }, []);
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setAuthError('');
     const cleanUser = username.trim();
-    if (!cleanUser || !password) return;
-    setAuthLoading(true);
+    if (!cleanUser || !password) {
+      setAuthError('Vui lòng nhập đầy đủ tài khoản và mật khẩu.');
+      return;
+    }
 
-    if (authMode === 'login') {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('username', cleanUser)
-        .eq('password', password)
-        .single();
-
-      setAuthLoading(false);
-      if (error || !data) {
-        alert('Sai tên đăng nhập hoặc mật khẩu!');
-        return;
-      }
-      localStorage.setItem('oj_user', JSON.stringify(data));
-      setUser(data);
-      setShowAuthModal(false);
-      setUsername('');
-      setPassword('');
-      window.location.reload();
-    } else {
+    if (isRegisterMode) {
       const { data: existing } = await supabase
         .from('users')
-        .select('id')
+        .select('username')
         .eq('username', cleanUser)
-        .maybeSingle();
-
+        .single();
       if (existing) {
-        setAuthLoading(false);
-        alert('Tên đăng nhập đã tồn tại!');
+        setAuthError('Tên đăng nhập đã tồn tại!');
         return;
       }
 
       const { data, error } = await supabase
         .from('users')
         .insert({ username: cleanUser, password, role: 'user' })
-        .select('*')
+        .select('username, role')
         .single();
 
-      setAuthLoading(false);
       if (error || !data) {
-        alert('Lỗi đăng ký: ' + (error?.message || 'Không xác định'));
+        setAuthError('Lỗi đăng ký: ' + (error?.message || 'Không xác định'));
         return;
       }
       localStorage.setItem('oj_user', JSON.stringify(data));
       setUser(data);
       setShowAuthModal(false);
-      setUsername('');
-      setPassword('');
+      window.location.reload();
+    } else {
+      const { data, error } = await supabase
+        .from('users')
+        .select('username, role')
+        .eq('username', cleanUser)
+        .eq('password', password)
+        .single();
+
+      if (error || !data) {
+        setAuthError('Sai tên đăng nhập hoặc mật khẩu!');
+        return;
+      }
+      localStorage.setItem('oj_user', JSON.stringify(data));
+      setUser(data);
+      setShowAuthModal(false);
       window.location.reload();
     }
   };
@@ -98,128 +92,80 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     window.location.reload();
   };
 
-  const navLinkStyle = (active: boolean): React.CSSProperties => ({
-    color: active ? '#ffffff' : '#cbd5e1',
-    textDecoration: 'none',
-    fontWeight: active ? 'bold' : 500,
-    padding: '6px 12px',
-    borderRadius: '6px',
-    backgroundColor: active ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
-    fontSize: '14px',
-  });
-
   return (
     <html lang="vi">
-      <body style={{ backgroundColor: '#f8fafc', color: '#0f172a', minHeight: '100vh' }}>
+      <body style={{ margin: 0, backgroundColor: '#f1f5f9', color: '#0f172a', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
         <header
           style={{
-            backgroundColor: '#0f172a',
+            backgroundColor: '#1e293b',
             color: '#fff',
             padding: '12px 24px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '12px',
           }}
         >
-          <div
-            style={{
-              maxWidth: '1200px',
-              margin: '0 auto',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: '12px',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-              <Link
-                href="/"
-                style={{
-                  color: '#38bdf8',
-                  fontWeight: 'bold',
-                  fontSize: '18px',
-                  textDecoration: 'none',
-                  letterSpacing: '0.3px',
-                }}
-              >
-                ⚡ Online Judge
-              </Link>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+            <Link href="/" style={{ color: '#fff', fontWeight: 'bold', fontSize: '18px', textDecoration: 'none' }}>
+              ⚡ Online Judge
+            </Link>
+            <nav style={{ display: 'flex', gap: '16px', fontSize: '14px' }}>
+              <Link href="/" style={{ color: '#e2e8f0', textDecoration: 'none' }}>Bài tập</Link>
+              <Link href="/contests" style={{ color: '#e2e8f0', textDecoration: 'none' }}>Kỳ thi (Contests)</Link>
+              <Link href="/submissions" style={{ color: '#e2e8f0', textDecoration: 'none' }}>Các bài nộp</Link>
+              {user?.role === 'admin' && (
+                <Link href="/admin" style={{ color: '#fbbf24', fontWeight: 'bold', textDecoration: 'none' }}>
+                  Quản trị (Admin)
+                </Link>
+              )}
+            </nav>
+          </div>
 
-              <nav style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                <Link href="/" style={navLinkStyle(pathname === '/')}>
-                  Bài tập
-                </Link>
-                <Link href="/contests" style={navLinkStyle(pathname?.startsWith('/contests') ?? false)}>
-                  Kỳ thi (Contests)
-                </Link>
-                <Link href="/submissions" style={navLinkStyle(pathname === '/submissions')}>
-                  Các bài nộp
-                </Link>
-                {user?.role === 'admin' && (
-                  <Link href="/admin" style={navLinkStyle(pathname === '/admin')}>
-                    Quản trị (Admin)
-                  </Link>
-                )}
-              </nav>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              {user ? (
-                <>
-                  <span style={{ fontSize: '13px', color: '#e2e8f0' }}>
-                    Xin chào, <b>{user.username}</b>{' '}
-                    {user.role === 'admin' && (
-                      <span
-                        style={{
-                          backgroundColor: '#dc2626',
-                          color: '#fff',
-                          padding: '2px 6px',
-                          borderRadius: '4px',
-                          fontSize: '11px',
-                          marginLeft: '4px',
-                        }}
-                      >
-                        ADMIN
-                      </span>
-                    )}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleLogout}
-                    style={{
-                      backgroundColor: '#334155',
-                      color: '#fff',
-                      border: 'none',
-                      padding: '6px 12px',
-                      borderRadius: '6px',
-                      fontSize: '13px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Đăng xuất
-                  </button>
-                </>
-              ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '14px' }}>
+            {user ? (
+              <>
+                <span>
+                  Xin chào, <b>{user.username}</b>
+                </span>
                 <button
                   type="button"
-                  onClick={() => {
-                    setAuthMode('login');
-                    setShowAuthModal(true);
-                  }}
+                  onClick={handleLogout}
                   style={{
-                    backgroundColor: '#2563eb',
+                    backgroundColor: '#ef4444',
                     color: '#fff',
                     border: 'none',
-                    padding: '7px 14px',
+                    padding: '6px 12px',
                     borderRadius: '6px',
-                    fontSize: '13px',
-                    fontWeight: 'bold',
                     cursor: 'pointer',
+                    fontWeight: 'bold',
                   }}
                 >
-                  Đăng nhập / Đăng ký
+                  Đăng xuất
                 </button>
-              )}
-            </div>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsRegisterMode(false);
+                  setAuthError('');
+                  setShowAuthModal(true);
+                }}
+                style={{
+                  backgroundColor: '#2563eb',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '6px 14px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold',
+                }}
+              >
+                Đăng nhập / Đăng ký
+              </button>
+            )}
           </div>
         </header>
 
@@ -234,7 +180,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             style={{
               position: 'fixed',
               inset: 0,
-              backgroundColor: 'rgba(0,0,0,0.55)',
+              backgroundColor: 'rgba(0,0,0,0.6)',
               display: 'flex',
               justifyContent: 'center',
               alignItems: 'center',
@@ -245,7 +191,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div
               onClick={(e) => e.stopPropagation()}
               style={{
-                backgroundColor: '#ffffff',
+                backgroundColor: '#fff',
                 color: '#0f172a',
                 padding: '24px',
                 borderRadius: '10px',
@@ -254,61 +200,28 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 style={{ margin: 0 }}>
-                  {authMode === 'login' ? 'Đăng nhập hệ thống' : 'Đăng ký tài khoản'}
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setShowAuthModal(false)}
-                  style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: '#64748b' }}
-                >
-                  ✕
-                </button>
-              </div>
+              <h3 style={{ marginTop: 0, marginBottom: '16px' }}>
+                {isRegisterMode ? 'Đăng ký tài khoản mới' : 'Đăng nhập hệ thống'}
+              </h3>
 
               <form onSubmit={handleAuthSubmit} style={{ display: 'grid', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>
-                    Tên đăng nhập
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 10px',
-                      borderRadius: '6px',
-                      border: '1px solid #cbd5e1',
-                      boxSizing: 'border-box',
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>
-                    Mật khẩu
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 10px',
-                      borderRadius: '6px',
-                      border: '1px solid #cbd5e1',
-                      boxSizing: 'border-box',
-                    }}
-                  />
-                </div>
-
+                <input
+                  type="text"
+                  placeholder="Tên đăng nhập"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                />
+                <input
+                  type="password"
+                  placeholder="Mật khẩu"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                />
+                {authError && <div style={{ color: '#dc2626', fontSize: '13px' }}>{authError}</div>}
                 <button
                   type="submit"
-                  disabled={authLoading}
                   style={{
                     backgroundColor: '#2563eb',
                     color: '#fff',
@@ -317,41 +230,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     borderRadius: '6px',
                     fontWeight: 'bold',
                     cursor: 'pointer',
-                    marginTop: '4px',
                   }}
                 >
-                  {authLoading
-                    ? 'Đang xử lý...'
-                    : authMode === 'login'
-                    ? 'Đăng nhập'
-                    : 'Tạo tài khoản'}
+                  {isRegisterMode ? 'Đăng ký' : 'Đăng nhập'}
                 </button>
               </form>
 
-              <div style={{ marginTop: '14px', textAlign: 'center', fontSize: '13px', color: '#64748b' }}>
-                {authMode === 'login' ? (
-                  <>
-                    Chưa có tài khoản?{' '}
-                    <button
-                      type="button"
-                      onClick={() => setAuthMode('register')}
-                      style={{ background: 'none', border: 'none', color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' }}
-                    >
-                      Đăng ký ngay
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    Đã có tài khoản?{' '}
-                    <button
-                      type="button"
-                      onClick={() => setAuthMode('login')}
-                      style={{ background: 'none', border: 'none', color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' }}
-                    >
-                      Đăng nhập
-                    </button>
-                  </>
-                )}
+              <div style={{ marginTop: '12px', fontSize: '13px', textAlign: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsRegisterMode(!isRegisterMode);
+                    setAuthError('');
+                  }}
+                  style={{ background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', textDecoration: 'underline' }}
+                >
+                  {isRegisterMode ? 'Đã có tài khoản? Đăng nhập' : 'Chưa có tài khoản? Đăng ký ngay'}
+                </button>
               </div>
             </div>
           </div>
