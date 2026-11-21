@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -51,6 +51,100 @@ function formatCountdown(ms: number) {
   return days > 0
     ? `${days} ngày ${pad(hours)}:${pad(mins)}:${pad(secs)}`
     : `${pad(hours)}:${pad(mins)}:${pad(secs)}`;
+}
+
+// Component tự động tải KaTeX từ CDN và render toàn bộ mã LaTeX ($...$, $$...$$, \(...\), \[...\])
+function MathStatement({ content }: { content: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const renderMath = () => {
+      if (cancelled || !containerRef.current) return;
+      const w = window as any;
+      if (w.renderMathInElement) {
+        w.renderMathInElement(containerRef.current, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+        });
+      }
+    };
+
+    const ensureKatexLoaded = async () => {
+      if (!document.getElementById('katex-css')) {
+        const link = document.createElement('link');
+        link.id = 'katex-css';
+        link.rel = 'stylesheet';
+        link.href = 'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css';
+        document.head.appendChild(link);
+      }
+
+      const w = window as any;
+      if (w.katex && w.renderMathInElement) {
+        renderMath();
+        return;
+      }
+
+      if (!w.katex) {
+        await new Promise<void>((resolve) => {
+          const existing = document.getElementById('katex-js') as HTMLScriptElement | null;
+          if (existing) {
+            existing.addEventListener('load', () => resolve(), { once: true });
+            return;
+          }
+          const script = document.createElement('script');
+          script.id = 'katex-js';
+          script.src = 'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js';
+          script.async = true;
+          script.onload = () => resolve();
+          document.head.appendChild(script);
+        });
+      }
+
+      if (!w.renderMathInElement) {
+        await new Promise<void>((resolve) => {
+          const existing = document.getElementById('katex-auto-render-js') as HTMLScriptElement | null;
+          if (existing) {
+            existing.addEventListener('load', () => resolve(), { once: true });
+            return;
+          }
+          const autoScript = document.createElement('script');
+          autoScript.id = 'katex-auto-render-js';
+          autoScript.src =
+            'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js';
+          autoScript.async = true;
+          autoScript.onload = () => resolve();
+          document.head.appendChild(autoScript);
+        });
+      }
+
+      renderMath();
+    };
+
+    if (containerRef.current) {
+      containerRef.current.textContent = content;
+    }
+    ensureKatexLoaded();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [content]);
+
+  return (
+    <div
+      ref={containerRef}
+      style={{ whiteSpace: 'pre-wrap', lineHeight: 1.75, fontSize: '15px' }}
+    >
+      {content}
+    </div>
+  );
 }
 
 const DEFAULT_LANGUAGES = [
@@ -106,7 +200,6 @@ export default function ProblemDetailPage() {
       const prob = pRes.data;
       setProblem(prob);
 
-      // Ưu tiên lấy template toàn cục từ system_settings (do Admin lưu ở trang /account)
       const adminCustomMap: Record<string, string> =
         ssRes.data?.value && typeof ssRes.data.value === 'object' ? ssRes.data.value : {};
 
@@ -120,7 +213,6 @@ export default function ProblemDetailPage() {
           : item.template_code ?? '',
       }));
 
-      // Bổ sung nếu trong system_settings có key ngôn ngữ chưa nằm trong baseList
       for (const [langKey, codeVal] of Object.entries(adminCustomMap)) {
         if (!mergedTemplates.some((t: any) => t.language === langKey)) {
           mergedTemplates.push({
@@ -180,7 +272,6 @@ export default function ProblemDetailPage() {
     loadProblemData();
   }, [problemId]);
 
-  // Theo dõi trạng thái chấm real-time từ judge.cpp
   useEffect(() => {
     if (!latestSub?.id) return;
     if (latestSub.status === 'Finished') return;
@@ -380,9 +471,10 @@ export default function ProblemDetailPage() {
             )}
           </div>
 
-          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.65, fontSize: '15px' }}>
-            {problem.statement || 'Chưa có nội dung mô tả chi tiết cho bài tập này.'}
-          </div>
+          {/* Nội dung đề bài hỗ trợ LaTeX đầy đủ */}
+          <MathStatement
+            content={problem.statement || 'Chưa có nội dung mô tả chi tiết cho bài tập này.'}
+          />
 
           {sampleTest && (
             <div style={{ marginTop: '24px' }}>
