@@ -127,7 +127,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {user ? (
               <>
                 <Link
-                  href="/profile"
+                  href="/account"
                   title="Bấm để đổi mật khẩu và chỉnh sửa template code"
                   style={{
                     color: '#f8fafc',
