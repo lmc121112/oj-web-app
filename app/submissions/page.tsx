@@ -61,7 +61,6 @@ export default function SubmissionsPage() {
     };
   }, []);
 
-  // Kiểm tra xem bài nộp có đang bị ẩn quá trình chấm (OI Mode) không
   const isGradingHidden = (sub: any) => {
     if (user?.role === 'admin') return false;
     const prob = problemsMap[sub.problem_id];
@@ -71,7 +70,6 @@ export default function SubmissionsPage() {
     return nowMs <= new Date(contest.end_time).getTime();
   };
 
-  // Lọc bài nộp (giữ nguyên 2 tab khi đã đăng nhập)
   const displayedSubs = submissions.filter((s) => {
     if (!user) {
       return s.username === 'guest' || !s.username;
@@ -83,7 +81,6 @@ export default function SubmissionsPage() {
     return true;
   });
 
-  // Lấy verdict hiển thị chuẩn từ schema judge.cpp (verdict + status)
   const getDisplayVerdict = (sub: any) => {
     if (sub.status === 'Pending' || sub.status === 'Judging') {
       return sub.status;
@@ -221,7 +218,6 @@ export default function SubmissionsPage() {
                               {displayVerdict}
                             </span>
 
-                            {/* Cho phép bấm xem chi tiết nếu đã đăng nhập (kể cả CE hoặc có test_results) */}
                             {user && (!hideTestDetail || displayVerdict === 'CE') && (testResults.length > 0 || s.compile_message || s.source_code) && (
                               <button
                                 type="button"
@@ -242,7 +238,6 @@ export default function SubmissionsPage() {
                             )}
                           </div>
 
-                          {/* Thanh ô màu từng test case khớp judge.cpp (tr.verdict) */}
                           {testResults.length > 0 && (
                             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '6px' }}>
                               {testResults.map((tr: any, i: number) => {
@@ -291,7 +286,7 @@ export default function SubmissionsPage() {
         </table>
       </div>
 
-      {/* Modal Chi tiết Bài nộp đầy đủ (Test cases, Input/Expected/Actual, Compile Error, Source Code) */}
+      {/* Modal Chi tiết Bài nộp đầy đủ */}
       {selectedSub && (
         <div
           onClick={() => setSelectedSub(null)}
@@ -314,7 +309,7 @@ export default function SubmissionsPage() {
               padding: '24px',
               borderRadius: '10px',
               width: '100%',
-              maxWidth: '820px',
+              maxWidth: '840px',
               maxHeight: '88vh',
               overflowY: 'auto',
               border: '1px solid var(--border-color)',
@@ -346,7 +341,7 @@ export default function SubmissionsPage() {
             {selectedSub.compile_message && (
               <div style={{ marginBottom: '16px' }}>
                 <div style={{ fontWeight: 'bold', color: '#dc2626', fontSize: '13px', marginBottom: '6px' }}>
-                  Thông báo biên dịch (Compiler Output):
+                  Judge Response (Compiler Output):
                 </div>
                 <pre
                   style={{
@@ -374,6 +369,9 @@ export default function SubmissionsPage() {
                   const hideTests = Boolean(
                     problemsMap[selectedSub.problem_id]?.hide_tests && user?.role !== 'admin'
                   );
+                  const judgeMsg =
+                    tr.judge_msg ||
+                    (tv === 'AC' ? 'Output chính xác' : 'Không khớp kết quả');
 
                   return (
                     <div
@@ -385,19 +383,33 @@ export default function SubmissionsPage() {
                         backgroundColor: 'var(--bg-subtle)',
                       }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 'bold', fontSize: '13px', marginBottom: hideTests ? 0 : '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 'bold', fontSize: '13px', marginBottom: '8px' }}>
                         <span>
                           Test #{tNum}:{' '}
                           <span style={{ color: getVerdictColor(tv) }}>{tv}</span>
-                          {tr.judge_msg && (
-                            <span style={{ fontWeight: 'normal', color: '#64748b', marginLeft: '8px' }}>
-                              — {tr.judge_msg}
-                            </span>
-                          )}
                         </span>
                         <span style={{ fontFamily: 'monospace' }}>
                           {tr.time_ms ?? 0} ms | {tr.mem_kb ?? tr.memory_kb ?? 0} KB
                         </span>
+                      </div>
+
+                      {/* Khung Judge Response rõ ràng cho từng Test */}
+                      <div
+                        style={{
+                          marginBottom: hideTests ? 0 : '10px',
+                          padding: '8px 10px',
+                          borderRadius: '5px',
+                          backgroundColor: tv === 'AC' ? 'rgba(22, 163, 74, 0.08)' : 'rgba(220, 38, 38, 0.08)',
+                          borderLeft: `3px solid ${getVerdictColor(tv)}`,
+                          fontSize: '12px',
+                        }}
+                      >
+                        <div style={{ fontWeight: 'bold', color: '#64748b', marginBottom: '2px' }}>
+                          Judge Response:
+                        </div>
+                        <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace', color: 'inherit' }}>
+                          {judgeMsg}
+                        </pre>
                       </div>
 
                       {!hideTests && (
@@ -409,13 +421,13 @@ export default function SubmissionsPage() {
                             </pre>
                           </div>
                           <div>
-                            <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#64748b' }}>Đáp án chuẩn (Expected):</div>
+                            <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#64748b' }}>Expected Output:</div>
                             <pre style={{ margin: 0, padding: '8px', borderRadius: '4px', backgroundColor: '#f1f5f9', maxHeight: '140px', overflow: 'auto', fontFamily: 'monospace' }}>
                               {tr.expected ?? ''}
                             </pre>
                           </div>
                           <div>
-                            <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#64748b' }}>Kết quả của bạn (Actual):</div>
+                            <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#64748b' }}>Actual Output:</div>
                             <pre style={{ margin: 0, padding: '8px', borderRadius: '4px', backgroundColor: '#f1f5f9', maxHeight: '140px', overflow: 'auto', fontFamily: 'monospace' }}>
                               {tr.actual ?? ''}
                             </pre>
@@ -428,7 +440,7 @@ export default function SubmissionsPage() {
               </div>
             )}
 
-            {/* Mã nguồn đã nộp (chỉ hiện cho chính chủ hoặc Admin) */}
+            {/* Mã nguồn đã nộp */}
             {selectedSub.source_code && (user?.role === 'admin' || user?.username === selectedSub.username) && (
               <div>
                 <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '6px' }}>
