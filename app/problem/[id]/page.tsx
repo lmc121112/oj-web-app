@@ -355,4 +355,301 @@ export default function ProblemDetailPage() {
               <h4 style={{ margin: '0 0 10px 0' }}>Ví dụ mẫu</h4>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
-                  <div style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '4px', color: '#64748b
+                  <div style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '4px', color: '#64748b' }}>
+                    {problem.io_mode === 'file' ? `${problem.io_filename}.in` : 'INPUT'}
+                  </div>
+                  <pre
+                    style={{
+                      margin: 0,
+                      padding: '10px 12px',
+                      borderRadius: '6px',
+                      backgroundColor: '#f8fafc',
+                      border: '1px solid #cbd5e1',
+                      fontFamily: 'monospace',
+                      fontSize: '13px',
+                      overflowX: 'auto',
+                    }}
+                  >
+                    {sampleTest.input_data}
+                  </pre>
+                </div>
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '4px', color: '#64748b' }}>
+                    {problem.io_mode === 'file' ? `${problem.io_filename}.out` : 'OUTPUT'}
+                  </div>
+                  <pre
+                    style={{
+                      margin: 0,
+                      padding: '10px 12px',
+                      borderRadius: '6px',
+                      backgroundColor: '#f8fafc',
+                      border: '1px solid #cbd5e1',
+                      fontFamily: 'monospace',
+                      fontSize: '13px',
+                      overflowX: 'auto',
+                    }}
+                  >
+                    {sampleTest.expected_output}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Khung Nộp bài giải dùng Ace Editor */}
+        <div style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+          <h3 style={{ marginTop: 0, marginBottom: '14px' }}>Gửi bài giải</h3>
+
+          <form onSubmit={handleSubmitCode} style={{ display: 'grid', gap: '12px' }}>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <label style={{ fontSize: '14px', fontWeight: 'bold' }}>Ngôn ngữ:</label>
+              <select
+                value={language}
+                onChange={(e) => handleLanguageChange(e.target.value)}
+                style={{ padding: '7px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }}
+              >
+                {templates.length > 0 ? (
+                  templates.map((t: any) => (
+                    <option key={t.language} value={t.language}>
+                      {t.display_name || t.language.toUpperCase()}
+                    </option>
+                  ))
+                ) : (
+                  <>
+                    <option value="cpp20">C++20 (GCC)</option>
+                    <option value="python">Python 3</option>
+                    <option value="java">Java</option>
+                    <option value="csharp">C# (.NET 8)</option>
+                    <option value="rust">Rust</option>
+                  </>
+                )}
+              </select>
+            </div>
+
+            <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden' }}>
+              <AceEditor
+                mode={getAceMode(language)}
+                theme="github"
+                name="oj-code-editor"
+                value={sourceCode}
+                onChange={(val) => setSourceCode(val)}
+                width="100%"
+                height="400px"
+                fontSize={14}
+                showPrintMargin={false}
+                showGutter={true}
+                highlightActiveLine={true}
+                setOptions={{
+                  enableBasicAutocompletion: true,
+                  enableLiveAutocompletion: true,
+                  showLineNumbers: true,
+                  tabSize: 4,
+                  useSoftTabs: true,
+                }}
+              />
+            </div>
+
+            <div>
+              <button
+                type="submit"
+                disabled={submitting}
+                style={{
+                  backgroundColor: '#16a34a',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '10px 24px',
+                  borderRadius: '6px',
+                  fontWeight: 'bold',
+                  fontSize: '15px',
+                  cursor: submitting ? 'not-allowed' : 'pointer',
+                  opacity: submitting ? 0.7 : 1,
+                }}
+              >
+                {submitting ? 'Đang gửi bài...' : '🚀 Nộp bài'}
+              </button>
+            </div>
+          </form>
+
+          {/* Kết quả chấm real-time khớp 100% schema judge.cpp */}
+          {latestSub && (
+            <div
+              style={{
+                marginTop: '18px',
+                padding: '14px 16px',
+                borderRadius: '8px',
+                border: '1px solid #cbd5e1',
+                backgroundColor: '#f8fafc',
+              }}
+            >
+              {shouldHideGrading ? (
+                <div style={{ color: '#2563eb', fontWeight: 'bold', fontSize: '14px' }}>
+                  📩 Đã ghi nhận bài nộp #{latestSub.id}! Toàn bộ quá trình và kết quả chấm đang được ẩn theo quy chế Contest và sẽ tự động hiển thị sau khi hết giờ thi.
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                    <span style={{ fontSize: '14px' }}>
+                      Bài nộp <b>#{latestSub.id}</b> — Kết quả:{' '}
+                      <b
+                        style={{
+                          color:
+                            latestSub.status !== 'Finished'
+                              ? '#2563eb'
+                              : latestSub.verdict === 'AC'
+                              ? '#16a34a'
+                              : '#dc2626',
+                        }}
+                      >
+                        {latestSub.status !== 'Finished'
+                          ? `${latestSub.status}...`
+                          : latestSub.verdict || latestSub.status}
+                      </b>
+                    </span>
+                    <span style={{ fontSize: '13px', color: '#64748b', fontFamily: 'monospace' }}>
+                      Time: {latestSub.exec_time_ms ?? 0} ms | Mem: {latestSub.memory_kb ?? 0} KB
+                    </span>
+                  </div>
+
+                  {latestSub.verdict === 'CE' && latestSub.compile_message && (
+                    <pre
+                      style={{
+                        margin: 0,
+                        padding: '10px',
+                        borderRadius: '6px',
+                        backgroundColor: '#fef2f2',
+                        color: '#dc2626',
+                        fontSize: '12px',
+                        overflowX: 'auto',
+                      }}
+                    >
+                      {latestSub.compile_message}
+                    </pre>
+                  )}
+
+                  {testResults.length > 0 && (
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {testResults.map((tr: any, idx: number) => {
+                        const v = tr.verdict || 'G';
+                        const bg =
+                          v === 'AC'
+                            ? '#16a34a'
+                            : v === 'G'
+                            ? '#1e293b'
+                            : v === 'TLE'
+                            ? '#d97706'
+                            : '#dc2626';
+                        return (
+                          <span
+                            key={idx}
+                            title={`Test #${tr.test_num || idx + 1}: ${v} (${tr.time_ms ?? 0}ms)`}
+                            style={{
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              backgroundColor: bg,
+                              color: '#fff',
+                              fontSize: '12px',
+                              fontWeight: 'bold',
+                              fontFamily: 'monospace',
+                            }}
+                          >
+                            #{tr.test_num || idx + 1}: {v}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* CỘT PHẢI: SIDEBAR ĐIỀU HƯỚNG BÀI TRONG CONTEST */}
+      {contest && (
+        <aside
+          style={{
+            background: '#fff',
+            padding: '16px',
+            borderRadius: '8px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+            position: 'sticky',
+            top: '20px',
+            display: 'grid',
+            gap: '14px',
+          }}
+        >
+          <div
+            style={{
+              padding: '12px',
+              borderRadius: '6px',
+              border: '1px dashed #16a34a',
+              backgroundColor: 'rgba(22, 163, 74, 0.08)',
+              textAlign: 'center',
+            }}
+          >
+            <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '4px' }}>
+              {contest.title}
+            </div>
+            <div style={{ fontFamily: 'monospace', fontSize: '15px', fontWeight: 'bold', color: isContestRunning ? '#16a34a' : '#64748b' }}>
+              {isContestRunning
+                ? formatCountdown(contestEndMs - nowMs)
+                : isContestUpcoming
+                ? `Mở sau ${formatCountdown(contestStartMs - nowMs)}`
+                : 'Đã kết thúc'}
+            </div>
+            <div style={{ marginTop: '6px' }}>
+              <Link
+                href={`/contests/${contest.id}`}
+                style={{ fontSize: '12px', color: '#2563eb', textDecoration: 'none', fontWeight: 600 }}
+              >
+                Tới danh sách bài kỳ thi
+              </Link>
+            </div>
+          </div>
+
+          <div>
+            <div
+              style={{
+                fontSize: '13px',
+                fontWeight: 'bold',
+                paddingBottom: '8px',
+                marginBottom: '6px',
+                borderBottom: '1px solid #e2e8f0',
+              }}
+            >
+              ▾ Bài ({contestProblems.length})
+            </div>
+            <div style={{ display: 'grid', gap: '4px' }}>
+              {contestProblems.map((cp, index) => {
+                const isCurrent = cp.id === problem.id;
+                return (
+                  <Link
+                    key={cp.id}
+                    href={`/problem/${cp.id}`}
+                    title={`${index + 1}. ${cp.title} (${cp.id})`}
+                    style={{
+                      display: 'block',
+                      textAlign: 'center',
+                      padding: '8px 10px',
+                      borderRadius: '4px',
+                      textDecoration: 'none',
+                      fontSize: '14px',
+                      fontWeight: isCurrent ? 'bold' : 500,
+                      backgroundColor: isCurrent ? '#fef08a' : 'transparent',
+                      color: isCurrent ? '#0f172a' : '#2563eb',
+                      border: isCurrent ? '1px solid #eab308' : '1px solid transparent',
+                    }}
+                  >
+                    {index + 1}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        </aside>
+      )}
+    </div>
+  );
+}
