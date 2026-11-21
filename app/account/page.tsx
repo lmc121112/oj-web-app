@@ -12,7 +12,7 @@ const AceEditor = dynamic(
     await import('ace-builds/src-noconflict/mode-csharp');
     await import('ace-builds/src-noconflict/mode-rust');
     await import('ace-builds/src-noconflict/theme-monokai');
-    return ace;
+    return ace.default || ace;
   },
   { ssr: false }
 );
@@ -25,13 +25,21 @@ const ACE_MODES: Record<string, string> = {
   rust: 'rust',
 };
 
+const LANG_DISPLAY_NAMES: Record<string, string> = {
+  cpp20: 'C++20 (GCC)',
+  python: 'Python 3',
+  java: 'Java 17',
+  csharp: 'C# (.NET 8)',
+  rust: 'Rust',
+};
+
 export default function AccountManagementPage() {
   const [user, setUser] = useState<any>(null);
   const [oldPass, setOldPass] = useState('');
   const [newPass, setNewPass] = useState('');
   const [passMsg, setPassMsg] = useState('');
 
-  // State cho Template code (chỉ Admin)
+  // State cho Template code toàn cục (chỉ Admin)
   const [templates, setTemplates] = useState<Record<string, string>>({});
   const [selectedLang, setSelectedLang] = useState('cpp20');
   const [tplMsg, setTplMsg] = useState('');
@@ -44,14 +52,21 @@ export default function AccountManagementPage() {
       setUser(parsed);
 
       if (parsed.role === 'admin') {
-        supabase
-          .from('system_settings')
-          .select('value')
-          .eq('key', 'code_templates')
-          .single()
-          .then(({ data }) => {
-            if (data?.value) setTemplates(data.value);
-          });
+        Promise.all([
+          supabase.from('language_templates').select('language, template_code'),
+          supabase.from('system_settings').select('value').eq('key', 'code_templates').maybeSingle(),
+        ]).then(([ltRes, ssRes]) => {
+          const merged: Record<string, string> = {};
+          if (ltRes.data) {
+            for (const row of ltRes.data) {
+              merged[row.language] = row.template_code || '';
+            }
+          }
+          if (ssRes.data?.value && typeof ssRes.data.value === 'object') {
+            Object.assign(merged, ssRes.data.value);
+          }
+          setTemplates(merged);
+        });
       }
     } catch {}
   }, []);
@@ -89,14 +104,23 @@ export default function AccountManagementPage() {
 
   const handleSaveTemplate = async () => {
     setTplMsg('');
-    const { error } = await supabase
-      .from('system_settings')
-      .upsert({ key: 'code_templates', value: templates });
 
-    if (error) {
-      setTplMsg('❌ Lỗi lưu template: ' + error.message);
+    const [ssRes, ltRes] = await Promise.all([
+      supabase.from('system_settings').upsert({ key: 'code_templates', value: templates }),
+      supabase.from('language_templates').upsert(
+        {
+          language: selectedLang,
+          display_name: LANG_DISPLAY_NAMES[selectedLang] || selectedLang.toUpperCase(),
+          template_code: templates[selectedLang] ?? '',
+        },
+        { onConflict: 'language' }
+      ),
+    ]);
+
+    if (ssRes.error && ltRes.error) {
+      setTplMsg('❌ Lỗi lưu template: ' + ssRes.error.message);
     } else {
-      setTplMsg(`✅ Đã lưu template mặc định cho ngôn ngữ ${selectedLang.toUpperCase()}!`);
+      setTplMsg(`✅ Đã lưu template toàn cục cho ngôn ngữ ${selectedLang.toUpperCase()}!`);
     }
   };
 
@@ -154,7 +178,7 @@ export default function AccountManagementPage() {
         <div style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
           <h3 style={{ marginTop: 0 }}>Cấu hình Template code mặc định (Chỉ Admin)</h3>
           <p style={{ fontSize: '14px', color: '#64748b' }}>
-            Đoạn mã nguồn mẫu sẽ tự động hiển thị trong Ace Editor khi thí sinh chọn ngôn ngữ tương ứng.
+            Đoạn mã nguồn mẫu sẽ tự động hiển thị trong Ace Editor khi tất cả tài khoản (Admin &amp; User) chọn ngôn ngữ tương ứng.
           </p>
 
           <div style={{ marginBottom: '12px', display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -180,7 +204,7 @@ export default function AccountManagementPage() {
               mode={ACE_MODES[selectedLang] || 'c_cpp'}
               theme="monokai"
               name="admin-template-editor"
-              value={templates[selectedLang] || ''}
+              value={templates[selectedLang] ?? ''}
               onChange={(val) => setTemplates({ ...templates, [selectedLang]: val })}
               fontSize={14}
               width="100%"
