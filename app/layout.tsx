@@ -6,11 +6,16 @@ import { supabase } from '../lib/supabase';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any>(null);
+  const [checkingAdmin, setCheckingAdmin] = useState(true);
+  const [needsAdminSetup, setNeedsAdminSetup] = useState(false);
+
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('oj_user');
@@ -20,9 +25,29 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       } catch {}
     }
 
-    // Đảm bảo xóa class dark nếu trình duyệt còn lưu từ trước
     document.documentElement.classList.remove('dark');
     localStorage.removeItem('oj_theme');
+
+    // Kiểm tra xem hệ thống đã có tài khoản Admin nào chưa
+    const checkInitialAdmin = async () => {
+      const { data, error } = await supabase
+        .from('users')
+        .select('id')
+        .eq('role', 'admin')
+        .limit(1);
+
+      if (!error && (!data || data.length === 0)) {
+        // Nếu chưa có Admin -> xóa session cũ (nếu có) và ép buộc khởi tạo Admin đầu tiên
+        localStorage.removeItem('oj_user');
+        setUser(null);
+        setNeedsAdminSetup(true);
+      } else {
+        setNeedsAdminSetup(false);
+      }
+      setCheckingAdmin(false);
+    };
+
+    checkInitialAdmin();
 
     const handleOpenLogin = () => {
       setIsRegisterMode(false);
@@ -33,6 +58,63 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     return () => window.removeEventListener('open-login-modal', handleOpenLogin);
   }, []);
 
+  // Xử lý khởi tạo tài khoản Admin đầu tiên bắt buộc
+  const handleCreateFirstAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    const cleanUser = username.trim();
+
+    if (!cleanUser || !password) {
+      setAuthError('Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu Admin.');
+      return;
+    }
+    if (password.length < 4) {
+      setAuthError('Mật khẩu Admin cần tối thiểu 4 ký tự.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setAuthError('Mật khẩu xác nhận không khớp!');
+      return;
+    }
+
+    setAuthLoading(true);
+    // Kiểm tra lại lần nữa tránh tạo trùng
+    const { data: existingAdmins } = await supabase
+      .from('users')
+      .select('id')
+      .eq('role', 'admin')
+      .limit(1);
+
+    if (existingAdmins && existingAdmins.length > 0) {
+      setNeedsAdminSetup(false);
+      setAuthLoading(false);
+      window.location.reload();
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('users')
+      .upsert(
+        { username: cleanUser, password, role: 'admin' },
+        { onConflict: 'username' }
+      )
+      .select('id, username, role')
+      .single();
+
+    setAuthLoading(false);
+
+    if (error || !data) {
+      setAuthError('Lỗi khởi tạo Admin: ' + (error?.message || 'Không xác định'));
+      return;
+    }
+
+    localStorage.setItem('oj_user', JSON.stringify(data));
+    setUser(data);
+    setNeedsAdminSetup(false);
+    window.location.reload();
+  };
+
+  // Xử lý Đăng nhập / Đăng ký thông thường khi đã có Admin
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
@@ -42,23 +124,26 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       return;
     }
 
+    setAuthLoading(true);
     if (isRegisterMode) {
       const { data: existing } = await supabase
         .from('users')
         .select('username')
         .eq('username', cleanUser)
-        .single();
+        .maybeSingle();
       if (existing) {
         setAuthError('Tên đăng nhập đã tồn tại!');
+        setAuthLoading(false);
         return;
       }
 
       const { data, error } = await supabase
         .from('users')
         .insert({ username: cleanUser, password, role: 'user' })
-        .select('username, role')
+        .select('id, username, role')
         .single();
 
+      setAuthLoading(false);
       if (error || !data) {
         setAuthError('Lỗi đăng ký: ' + (error?.message || 'Không xác định'));
         return;
@@ -70,11 +155,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     } else {
       const { data, error } = await supabase
         .from('users')
-        .select('username, role')
+        .select('id, username, role')
         .eq('username', cleanUser)
         .eq('password', password)
-        .single();
+        .maybeSingle();
 
+      setAuthLoading(false);
       if (error || !data) {
         setAuthError('Sai tên đăng nhập hoặc mật khẩu!');
         return;
@@ -184,11 +270,122 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </header>
 
         <main style={{ maxWidth: '1200px', margin: '24px auto', padding: '0 16px' }}>
-          {children}
+          {checkingAdmin ? (
+            <div style={{ background: '#fff', padding: '24px', borderRadius: '8px', textAlign: 'center', color: '#64748b' }}>
+              Đang kiểm tra trạng thái hệ thống...
+            </div>
+          ) : (
+            children
+          )}
         </main>
 
-        {/* Modal Đăng nhập / Đăng ký */}
-        {showAuthModal && (
+        {/* MODAL BẮT BUỘC KHỞI TẠO ADMIN ĐẦU TIÊN (KHÔNG THỂ ĐÓNG NẾU CHƯA TẠO XONG) */}
+        {!checkingAdmin && needsAdminSetup && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(15, 23, 42, 0.85)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 2000,
+              padding: '16px',
+            }}
+          >
+            <div
+              style={{
+                backgroundColor: '#fff',
+                color: '#0f172a',
+                padding: '28px',
+                borderRadius: '12px',
+                width: '100%',
+                maxWidth: '420px',
+                boxShadow: '0 20px 35px rgba(0,0,0,0.35)',
+                borderTop: '5px solid #dc2626',
+              }}
+            >
+              <h3 style={{ marginTop: 0, marginBottom: '8px', color: '#dc2626', fontSize: '20px' }}>
+                🛡️ Khởi tạo Quản trị viên (Admin)
+              </h3>
+              <p style={{ marginTop: 0, marginBottom: '18px', fontSize: '14px', color: '#475569', lineHeight: 1.5 }}>
+                Hệ thống hiện chưa có tài khoản <b>Admin</b> nào. Bạn bắt buộc phải thiết lập tài khoản Quản trị viên đầu tiên trước khi sử dụng Online Judge.
+              </p>
+
+              <form onSubmit={handleCreateFirstAdmin} style={{ display: 'grid', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>
+                    Tên đăng nhập Admin
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    autoFocus
+                    placeholder="Ví dụ: admin"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>
+                    Mật khẩu Admin
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Nhập mật khẩu quản trị"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>
+                    Xác nhận mật khẩu
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Nhập lại mật khẩu"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                  />
+                </div>
+
+                {authError && (
+                  <div style={{ color: '#dc2626', fontSize: '13px', fontWeight: 'bold' }}>
+                    ❌ {authError}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={authLoading}
+                  style={{
+                    marginTop: '4px',
+                    backgroundColor: '#dc2626',
+                    color: '#fff',
+                    border: 'none',
+                    padding: '11px',
+                    borderRadius: '6px',
+                    fontWeight: 'bold',
+                    fontSize: '15px',
+                    cursor: authLoading ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {authLoading ? 'Đang khởi tạo...' : '🚀 Tạo tài khoản Admin & Bắt đầu'}
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal Đăng nhập / Đăng ký thông thường */}
+        {!needsAdminSetup && showAuthModal && (
           <div
             onClick={() => setShowAuthModal(false)}
             style={{
@@ -236,6 +433,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 {authError && <div style={{ color: '#dc2626', fontSize: '13px' }}>{authError}</div>}
                 <button
                   type="submit"
+                  disabled={authLoading}
                   style={{
                     backgroundColor: '#2563eb',
                     color: '#fff',
@@ -246,7 +444,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     cursor: 'pointer',
                   }}
                 >
-                  {isRegisterMode ? 'Đăng ký' : 'Đăng nhập'}
+                  {authLoading ? 'Đang xử lý...' : isRegisterMode ? 'Đăng ký' : 'Đăng nhập'}
                 </button>
               </form>
 
