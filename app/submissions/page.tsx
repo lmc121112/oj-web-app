@@ -53,8 +53,7 @@ export default function SubmissionsPage() {
 
     fetchAll();
 
-    // Auto refresh nhẹ để cập nhật bài đang chấm
-    const poll = setInterval(fetchAll, 3000);
+    const poll = setInterval(fetchAll, 2500);
     const clock = setInterval(() => setNowMs(Date.now()), 1000);
     return () => {
       clearInterval(poll);
@@ -62,7 +61,7 @@ export default function SubmissionsPage() {
     };
   }, []);
 
-  // Kiểm tra xem một bài nộp có đang bị ẩn quá trình chấm (OI Mode) không
+  // Kiểm tra xem bài nộp có đang bị ẩn quá trình chấm (OI Mode) không
   const isGradingHidden = (sub: any) => {
     if (user?.role === 'admin') return false;
     const prob = problemsMap[sub.problem_id];
@@ -72,13 +71,11 @@ export default function SubmissionsPage() {
     return nowMs <= new Date(contest.end_time).getTime();
   };
 
-  // Lọc bài nộp theo trạng thái đăng nhập (giữ nguyên 2 tab khi đã đăng nhập)
+  // Lọc bài nộp (giữ nguyên 2 tab khi đã đăng nhập)
   const displayedSubs = submissions.filter((s) => {
     if (!user) {
-      // Chưa đăng nhập: chỉ hiện bài của guest
       return s.username === 'guest' || !s.username;
     }
-    // Đã đăng nhập: ẩn toàn bộ bài của guest
     if (s.username === 'guest' || !s.username) return false;
     if (filterTab === 'mine') {
       return s.username === user.username;
@@ -86,13 +83,21 @@ export default function SubmissionsPage() {
     return true;
   });
 
-  const renderStatusBadge = (status: string) => {
-    let color = '#dc2626';
-    if (status === 'Accepted') color = '#16a34a';
-    else if (status === 'Pending' || status === 'Judging') color = '#2563eb';
-    else if (status === 'Time Limit Exceeded') color = '#d97706';
+  // Lấy verdict hiển thị chuẩn từ schema judge.cpp (verdict + status)
+  const getDisplayVerdict = (sub: any) => {
+    if (sub.status === 'Pending' || sub.status === 'Judging') {
+      return sub.status;
+    }
+    return sub.verdict || sub.status || 'Unknown';
+  };
 
-    return <span style={{ fontWeight: 'bold', color }}>{status}</span>;
+  const getVerdictColor = (v: string) => {
+    const up = (v || '').toUpperCase();
+    if (up === 'AC' || up === 'ACCEPTED') return '#16a34a';
+    if (up === 'PENDING' || up === 'JUDGING' || up === 'G') return '#2563eb';
+    if (up === 'TLE' || up === 'TIME LIMIT EXCEEDED') return '#d97706';
+    if (up === 'CE' || up === 'COMPILE ERROR') return '#9333ea';
+    return '#dc2626';
   };
 
   return (
@@ -100,7 +105,6 @@ export default function SubmissionsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '18px' }}>
         <h2 style={{ margin: 0 }}>Các bài nộp (Submissions)</h2>
 
-        {/* Giữ nguyên 2 mục chuyển đổi khi đã đăng nhập */}
         {user && (
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
@@ -165,6 +169,9 @@ export default function SubmissionsPage() {
                 const hideNow = isGradingHidden(s);
                 const hideTestDetail = Boolean(prob?.hide_tests && user?.role !== 'admin');
                 const testResults: any[] = Array.isArray(s.test_results) ? s.test_results : [];
+                const displayVerdict = getDisplayVerdict(s);
+                const maxTime = s.exec_time_ms ?? s.execution_time_ms;
+                const maxMem = s.memory_kb ?? s.memory_used_kb;
 
                 return (
                   <tr key={s.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
@@ -179,7 +186,6 @@ export default function SubmissionsPage() {
                       </Link>
                     </td>
 
-                    {/* Yêu cầu 10: Cột Thuộc Contest */}
                     <td style={{ padding: '10px', fontFamily: 'monospace' }}>
                       {contestId ? (
                         <Link
@@ -203,7 +209,6 @@ export default function SubmissionsPage() {
 
                     <td style={{ padding: '10px', fontFamily: 'monospace' }}>{s.language}</td>
 
-                    {/* Trạng thái & Chi tiết từng test (tự động che kín nếu đang trong giờ OI Mode) */}
                     <td style={{ padding: '10px' }}>
                       {hideNow ? (
                         <span style={{ color: '#2563eb', fontWeight: 'bold', fontSize: '13px' }}>
@@ -212,8 +217,12 @@ export default function SubmissionsPage() {
                       ) : (
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                            {renderStatusBadge(s.status)}
-                            {user && !hideTestDetail && testResults.length > 0 && (
+                            <span style={{ fontWeight: 'bold', color: getVerdictColor(displayVerdict) }}>
+                              {displayVerdict}
+                            </span>
+
+                            {/* Cho phép bấm xem chi tiết nếu đã đăng nhập (kể cả CE hoặc có test_results) */}
+                            {user && (!hideTestDetail || displayVerdict === 'CE') && (testResults.length > 0 || s.compile_message || s.source_code) && (
                               <button
                                 type="button"
                                 onClick={() => setSelectedSub(s)}
@@ -221,39 +230,46 @@ export default function SubmissionsPage() {
                                   backgroundColor: '#e2e8f0',
                                   color: '#0f172a',
                                   border: 'none',
-                                  padding: '2px 8px',
+                                  padding: '3px 9px',
                                   borderRadius: '4px',
                                   fontSize: '11px',
                                   fontWeight: 'bold',
                                   cursor: 'pointer',
                                 }}
                               >
-                                Chi tiết ({testResults.length} test)
+                                {testResults.length > 0 ? `Chi tiết (${testResults.length} test)` : 'Xem chi tiết'}
                               </button>
                             )}
                           </div>
 
-                          {/* Thanh màu mini từng test case */}
+                          {/* Thanh ô màu từng test case khớp judge.cpp (tr.verdict) */}
                           {testResults.length > 0 && (
-                            <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap', marginTop: '5px' }}>
-                              {testResults.map((tr: any, i: number) => (
-                                <span
-                                  key={i}
-                                  title={`Test #${tr.test_order || i + 1}: ${tr.status}`}
-                                  style={{
-                                    width: '12px',
-                                    height: '12px',
-                                    borderRadius: '2px',
-                                    display: 'inline-block',
-                                    backgroundColor:
-                                      tr.status === 'Accepted'
-                                        ? '#16a34a'
-                                        : tr.status === 'Time Limit Exceeded'
-                                        ? '#d97706'
-                                        : '#dc2626',
-                                  }}
-                                />
-                              ))}
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '6px' }}>
+                              {testResults.map((tr: any, i: number) => {
+                                const tv = tr.verdict || tr.status || 'G';
+                                const tNum = tr.test_num || tr.test_order || i + 1;
+                                const bg =
+                                  tv === 'AC' || tv === 'Accepted'
+                                    ? '#16a34a'
+                                    : tv === 'G'
+                                    ? '#1e293b'
+                                    : tv === 'TLE' || tv === 'Time Limit Exceeded'
+                                    ? '#d97706'
+                                    : '#dc2626';
+                                return (
+                                  <span
+                                    key={i}
+                                    title={`Test #${tNum}: ${tv} (${tr.time_ms ?? 0}ms)`}
+                                    style={{
+                                      width: '13px',
+                                      height: '13px',
+                                      borderRadius: '2px',
+                                      display: 'inline-block',
+                                      backgroundColor: bg,
+                                    }}
+                                  />
+                                );
+                              })}
                             </div>
                           )}
                         </div>
@@ -263,7 +279,7 @@ export default function SubmissionsPage() {
                     <td style={{ padding: '10px', fontSize: '13px', fontFamily: 'monospace' }}>
                       {hideNow
                         ? '— / —'
-                        : `${s.execution_time_ms ?? '-'} ms / ${s.memory_used_kb ?? '-'} KB`}
+                        : `${maxTime ?? 0} ms / ${maxMem ?? 0} KB`}
                     </td>
 
                     <td style={{ padding: '10px', fontSize: '13px' }}>{formatGMT7(s.created_at)}</td>
@@ -275,9 +291,10 @@ export default function SubmissionsPage() {
         </table>
       </div>
 
-      {/* Modal xem chi tiết từng Test case */}
+      {/* Modal Chi tiết Bài nộp đầy đủ (Test cases, Input/Expected/Actual, Compile Error, Source Code) */}
       {selectedSub && (
         <div
+          onClick={() => setSelectedSub(null)}
           style={{
             position: 'fixed',
             inset: 0,
@@ -290,56 +307,150 @@ export default function SubmissionsPage() {
           }}
         >
           <div
+            onClick={(e) => e.stopPropagation()}
             style={{
               backgroundColor: 'var(--bg-card)',
               color: 'var(--text-main)',
               padding: '24px',
               borderRadius: '10px',
               width: '100%',
-              maxWidth: '720px',
-              maxHeight: '85vh',
+              maxWidth: '820px',
+              maxHeight: '88vh',
               overflowY: 'auto',
               border: '1px solid var(--border-color)',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <h3 style={{ margin: 0 }}>
-                Chi tiết bài nộp #{selectedSub.id} ({selectedSub.problem_id})
-              </h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px' }}>
+              <div>
+                <h3 style={{ margin: 0 }}>
+                  Chi tiết bài nộp #{selectedSub.id} ({selectedSub.problem_id}) —{' '}
+                  <span style={{ color: getVerdictColor(getDisplayVerdict(selectedSub)) }}>
+                    {getDisplayVerdict(selectedSub)}
+                  </span>
+                </h3>
+                <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
+                  Thí sinh: <b>{selectedSub.username}</b> | Ngôn ngữ: <code>{selectedSub.language}</code> | Max:{' '}
+                  <code>{selectedSub.exec_time_ms ?? 0} ms / {selectedSub.memory_kb ?? 0} KB</code>
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => setSelectedSub(null)}
-                style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: 'inherit' }}
+                style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: 'inherit' }}
               >
                 ✕
               </button>
             </div>
 
-            <div style={{ display: 'grid', gap: '10px' }}>
-              {(selectedSub.test_results || []).map((tr: any, idx: number) => (
-                <div
-                  key={idx}
+            {/* Lỗi biên dịch (nếu có) */}
+            {selectedSub.compile_message && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontWeight: 'bold', color: '#dc2626', fontSize: '13px', marginBottom: '6px' }}>
+                  Thông báo biên dịch (Compiler Output):
+                </div>
+                <pre
                   style={{
+                    margin: 0,
                     padding: '10px 12px',
                     borderRadius: '6px',
-                    border: '1px solid var(--border-color)',
-                    backgroundColor: 'var(--bg-subtle)',
+                    backgroundColor: '#fef2f2',
+                    color: '#dc2626',
+                    fontSize: '12px',
+                    overflowX: 'auto',
+                    whiteSpace: 'pre-wrap',
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '13px' }}>
-                    <span>
-                      Test #{tr.test_order || idx + 1}:{' '}
-                      <span style={{ color: tr.status === 'Accepted' ? '#16a34a' : '#dc2626' }}>
-                        {tr.status}
-                      </span>
-                    </span>
-                    <span style={{ fontFamily: 'monospace' }}>
-                      {tr.time_ms ?? '-'} ms | {tr.memory_kb ?? '-'} KB
-                    </span>
-                  </div>
+                  {selectedSub.compile_message}
+                </pre>
+              </div>
+            )}
+
+            {/* Danh sách chi tiết từng Test case */}
+            {Array.isArray(selectedSub.test_results) && selectedSub.test_results.length > 0 && (
+              <div style={{ display: 'grid', gap: '12px', marginBottom: '18px' }}>
+                {selectedSub.test_results.map((tr: any, idx: number) => {
+                  const tv = tr.verdict || tr.status || 'G';
+                  const tNum = tr.test_num || tr.test_order || idx + 1;
+                  const hideTests = Boolean(
+                    problemsMap[selectedSub.problem_id]?.hide_tests && user?.role !== 'admin'
+                  );
+
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        padding: '12px 14px',
+                        borderRadius: '8px',
+                        border: '1px solid var(--border-color)',
+                        backgroundColor: 'var(--bg-subtle)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 'bold', fontSize: '13px', marginBottom: hideTests ? 0 : '8px' }}>
+                        <span>
+                          Test #{tNum}:{' '}
+                          <span style={{ color: getVerdictColor(tv) }}>{tv}</span>
+                          {tr.judge_msg && (
+                            <span style={{ fontWeight: 'normal', color: '#64748b', marginLeft: '8px' }}>
+                              — {tr.judge_msg}
+                            </span>
+                          )}
+                        </span>
+                        <span style={{ fontFamily: 'monospace' }}>
+                          {tr.time_ms ?? 0} ms | {tr.mem_kb ?? tr.memory_kb ?? 0} KB
+                        </span>
+                      </div>
+
+                      {!hideTests && (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', fontSize: '12px' }}>
+                          <div>
+                            <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#64748b' }}>Input:</div>
+                            <pre style={{ margin: 0, padding: '8px', borderRadius: '4px', backgroundColor: '#f1f5f9', maxHeight: '140px', overflow: 'auto', fontFamily: 'monospace' }}>
+                              {tr.input ?? ''}
+                            </pre>
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#64748b' }}>Đáp án chuẩn (Expected):</div>
+                            <pre style={{ margin: 0, padding: '8px', borderRadius: '4px', backgroundColor: '#f1f5f9', maxHeight: '140px', overflow: 'auto', fontFamily: 'monospace' }}>
+                              {tr.expected ?? ''}
+                            </pre>
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#64748b' }}>Kết quả của bạn (Actual):</div>
+                            <pre style={{ margin: 0, padding: '8px', borderRadius: '4px', backgroundColor: '#f1f5f9', maxHeight: '140px', overflow: 'auto', fontFamily: 'monospace' }}>
+                              {tr.actual ?? ''}
+                            </pre>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Mã nguồn đã nộp (chỉ hiện cho chính chủ hoặc Admin) */}
+            {selectedSub.source_code && (user?.role === 'admin' || user?.username === selectedSub.username) && (
+              <div>
+                <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '6px' }}>
+                  Mã nguồn đã nộp:
                 </div>
-              ))}
-            </div>
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: '12px',
+                    borderRadius: '6px',
+                    backgroundColor: '#0f172a',
+                    color: '#f8fafc',
+                    fontSize: '12px',
+                    overflowX: 'auto',
+                    maxHeight: '280px',
+                    fontFamily: 'Consolas, Monaco, monospace',
+                  }}
+                >
+                  {selectedSub.source_code}
+                </pre>
+              </div>
+            )}
           </div>
         </div>
       )}
