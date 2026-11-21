@@ -2,7 +2,44 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { supabase } from '../../../lib/supabase';
+
+// Nạp AceEditor phía client để tránh lỗi SSR
+const AceEditor = dynamic(
+  async () => {
+    const ace = await import('react-ace');
+    await import('ace-builds/src-noconflict/mode-c_cpp');
+    await import('ace-builds/src-noconflict/mode-python');
+    await import('ace-builds/src-noconflict/mode-java');
+    await import('ace-builds/src-noconflict/mode-csharp');
+    await import('ace-builds/src-noconflict/mode-rust');
+    await import('ace-builds/src-noconflict/mode-pascal');
+    await import('ace-builds/src-noconflict/theme-github');
+    await import('ace-builds/src-noconflict/theme-tomorrow_night');
+    await import('ace-builds/src-noconflict/ext-language_tools');
+    return ace.default;
+  },
+  {
+    ssr: false,
+    loading: () => (
+      <div style={{ padding: '24px', border: '1px solid #cbd5e1', borderRadius: '6px', fontFamily: 'monospace' }}>
+        Đang khởi tạo trình soạn thảo Ace Editor...
+      </div>
+    ),
+  }
+);
+
+function getAceMode(lang: string): string {
+  const l = (lang || '').toLowerCase();
+  if (l.includes('cpp') || l === 'c') return 'c_cpp';
+  if (l.includes('py')) return 'python';
+  if (l.includes('java')) return 'java';
+  if (l.includes('cs') || l.includes('sharp')) return 'csharp';
+  if (l.includes('rust')) return 'rust';
+  if (l.includes('pas')) return 'pascal';
+  return 'c_cpp';
+}
 
 function formatCountdown(ms: number) {
   if (ms <= 0) return '00:00:00';
@@ -22,13 +59,14 @@ export default function ProblemDetailPage() {
   const problemId = decodeURIComponent(String(params?.id || ''));
 
   const [user, setUser] = useState<any>(null);
+  const [isDark, setIsDark] = useState(false);
   const [problem, setProblem] = useState<any>(null);
   const [contest, setContest] = useState<any>(null);
   const [contestProblems, setContestProblems] = useState<any[]>([]);
   const [sampleTest, setSampleTest] = useState<any>(null);
   const [templates, setTemplates] = useState<any[]>([]);
 
-  const [language, setLanguage] = useState('cpp');
+  const [language, setLanguage] = useState('cpp20');
   const [sourceCode, setSourceCode] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [latestSub, setLatestSub] = useState<any>(null);
@@ -43,8 +81,19 @@ export default function ProblemDetailPage() {
       } catch {}
     }
 
+    // Đồng bộ theme Ace Editor với Dark Mode
+    const syncDark = () => {
+      setIsDark(document.documentElement.classList.contains('dark'));
+    };
+    syncDark();
+    const observer = new MutationObserver(syncDark);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      observer.disconnect();
+    };
   }, []);
 
   useEffect(() => {
@@ -53,7 +102,6 @@ export default function ProblemDetailPage() {
       setLoading(true);
       setLatestSub(null);
 
-      // 1. Lấy thông tin đề bài & template ngôn ngữ
       const [pRes, tplRes] = await Promise.all([
         supabase.from('problems').select('*').eq('id', problemId).single(),
         supabase.from('language_templates').select('*').order('id', { ascending: true }),
@@ -65,7 +113,8 @@ export default function ProblemDetailPage() {
       if (tplRes.data && tplRes.data.length > 0) {
         setTemplates(tplRes.data);
         const defaultTpl =
-          tplRes.data.find((t: any) => t.language === 'cpp') || tplRes.data[0];
+          tplRes.data.find((t: any) => t.language === 'cpp20' || t.language === 'cpp') ||
+          tplRes.data[0];
         setLanguage(defaultTpl.language);
         setSourceCode(defaultTpl.template_code || '');
       } else {
@@ -75,7 +124,6 @@ export default function ProblemDetailPage() {
       }
 
       if (prob) {
-        // 2. Lấy Test #1 làm ví dụ nếu không bật ẩn test
         if (!prob.hide_tests) {
           const { data: tcs } = await supabase
             .from('test_cases')
@@ -89,7 +137,6 @@ export default function ProblemDetailPage() {
           setSampleTest(null);
         }
 
-        // 3. Nếu bài thuộc Contest -> Lấy thông tin Contest + danh sách các bài trong cùng Contest (Yêu cầu 7)
         if (prob.contest_id) {
           const [cRes, cpRes] = await Promise.all([
             supabase.from('contests').select('*').eq('id', prob.contest_id).single(),
@@ -114,10 +161,10 @@ export default function ProblemDetailPage() {
     loadProblemData();
   }, [problemId]);
 
-  // Theo dõi trạng thái chấm real-time cho bài vừa nộp
+  // Theo dõi trạng thái chấm real-time từ judge.cpp
   useEffect(() => {
     if (!latestSub?.id) return;
-    if (latestSub.status !== 'Pending' && latestSub.status !== 'Judging') return;
+    if (latestSub.status === 'Finished') return;
 
     const poll = setInterval(async () => {
       const { data } = await supabase
@@ -127,11 +174,11 @@ export default function ProblemDetailPage() {
         .single();
       if (data) {
         setLatestSub(data);
-        if (data.status !== 'Pending' && data.status !== 'Judging') {
+        if (data.status === 'Finished') {
           clearInterval(poll);
         }
       }
-    }, 1200);
+    }, 1000);
 
     return () => clearInterval(poll);
   }, [latestSub?.id, latestSub?.status]);
@@ -148,7 +195,6 @@ export default function ProblemDetailPage() {
     e.preventDefault();
     if (!problem || !sourceCode.trim()) return;
 
-    // Nếu là bài contest mà chưa đăng nhập thì chặn
     if (problem.contest_id && !user) {
       alert('Bạn cần đăng nhập để nộp bài trong Contest!');
       window.dispatchEvent(new Event('open-login-modal'));
@@ -193,7 +239,6 @@ export default function ProblemDetailPage() {
     );
   }
 
-  // Kiểm tra quyền truy cập nếu bài thuộc Contest
   const isAdmin = user?.role === 'admin';
   const contestStartMs = contest ? new Date(contest.start_time).getTime() : 0;
   const contestEndMs = contest ? new Date(contest.end_time).getTime() : 0;
@@ -203,16 +248,7 @@ export default function ProblemDetailPage() {
 
   if (problem.contest_id && !user) {
     return (
-      <div
-        style={{
-          background: '#fff',
-          padding: '40px 24px',
-          borderRadius: '10px',
-          textAlign: 'center',
-          maxWidth: '540px',
-          margin: '40px auto',
-        }}
-      >
+      <div style={{ background: '#fff', padding: '40px 24px', borderRadius: '10px', textAlign: 'center', maxWidth: '540px', margin: '40px auto' }}>
         <h2 style={{ color: '#dc2626', marginTop: 0 }}>Bạn cần đăng nhập để tham gia contest</h2>
         <p style={{ fontSize: '14px', color: '#64748b' }}>
           Bài tập <b>{problem.title}</b> thuộc kỳ thi <code>{problem.contest_id}</code>.
@@ -220,15 +256,7 @@ export default function ProblemDetailPage() {
         <button
           type="button"
           onClick={() => window.dispatchEvent(new Event('open-login-modal'))}
-          style={{
-            backgroundColor: '#2563eb',
-            color: '#fff',
-            border: 'none',
-            padding: '10px 24px',
-            borderRadius: '6px',
-            fontWeight: 'bold',
-            cursor: 'pointer',
-          }}
+          style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '10px 24px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
         >
           Đăng nhập ngay
         </button>
@@ -261,7 +289,6 @@ export default function ProblemDetailPage() {
     );
   }
 
-  // Yêu cầu 9: Có đang ẩn toàn bộ quá trình chấm (OI Mode) không?
   const shouldHideGrading = Boolean(
     problem.contest_id && problem.hide_grading && !isContestEnded && !isAdmin
   );
@@ -270,6 +297,8 @@ export default function ProblemDetailPage() {
     problem.io_mode === 'file'
       ? `File: ${problem.io_filename}.in / ${problem.io_filename}.out`
       : 'stdin / stdout';
+
+  const testResults: any[] = Array.isArray(latestSub?.test_results) ? latestSub.test_results : [];
 
   return (
     <div
@@ -280,7 +309,7 @@ export default function ProblemDetailPage() {
         alignItems: 'start',
       }}
     >
-      {/* ==================== CỘT CHÍNH: ĐỀ BÀI & KHUNG NỘP CODE ==================== */}
+      {/* CỘT CHÍNH: ĐỀ BÀI & ACE EDITOR */}
       <div style={{ display: 'grid', gap: '20px' }}>
         {/* Khung Đề bài */}
         <div style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
@@ -300,7 +329,6 @@ export default function ProblemDetailPage() {
               </Link>
             </div>
 
-            {/* Thanh thông số kỹ thuật (Time, Memory, I/O, Chế độ chấm) */}
             <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '10px', fontSize: '13px', color: '#475569' }}>
               <span>⏱ Thời gian: <b>{problem.time_limit_ms} ms</b></span>
               <span>💾 Bộ nhớ: <b>{problem.memory_limit_mb} MB</b></span>
@@ -326,19 +354,15 @@ export default function ProblemDetailPage() {
               >
                 📌 <b>Lưu ý đọc/ghi tệp:</b> Chương trình của bạn cần đọc dữ liệu từ tệp{' '}
                 <code>{problem.io_filename}.in</code> và ghi kết quả ra tệp{' '}
-                <code>{problem.io_filename}.out</code> (ví dụ trong C++ dùng{' '}
-                <code>freopen(&quot;{problem.io_filename}.in&quot;, &quot;r&quot;, stdin);</code> và{' '}
-                <code>freopen(&quot;{problem.io_filename}.out&quot;, &quot;w&quot;, stdout);</code>).
+                <code>{problem.io_filename}.out</code>.
               </div>
             )}
           </div>
 
-          {/* Nội dung đề bài */}
           <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.65, fontSize: '15px' }}>
             {problem.statement || 'Chưa có nội dung mô tả chi tiết cho bài tập này.'}
           </div>
 
-          {/* Ví dụ mẫu (Test #1 nếu không bật hide_tests) */}
           {sampleTest && (
             <div style={{ marginTop: '24px' }}>
               <h4 style={{ margin: '0 0 10px 0' }}>Ví dụ mẫu</h4>
@@ -386,7 +410,7 @@ export default function ProblemDetailPage() {
           )}
         </div>
 
-        {/* Khung Nộp bài giải */}
+        {/* Khung Nộp bài giải dùng Ace Editor */}
         <div style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
           <h3 style={{ marginTop: 0, marginBottom: '14px' }}>Gửi bài giải</h3>
 
@@ -406,32 +430,38 @@ export default function ProblemDetailPage() {
                   ))
                 ) : (
                   <>
-                    <option value="cpp">C++ (GCC)</option>
+                    <option value="cpp20">C++20 (GCC)</option>
                     <option value="python">Python 3</option>
-                    <option value="pascal">Free Pascal</option>
+                    <option value="java">Java</option>
+                    <option value="csharp">C# (.NET 8)</option>
+                    <option value="rust">Rust</option>
                   </>
                 )}
               </select>
             </div>
 
-            <textarea
-              rows={15}
-              required
-              value={sourceCode}
-              onChange={(e) => setSourceCode(e.target.value)}
-              placeholder="Dán mã nguồn của bạn vào đây..."
-              spellCheck={false}
-              style={{
-                width: '100%',
-                fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-                fontSize: '14px',
-                lineHeight: 1.5,
-                padding: '12px',
-                borderRadius: '6px',
-                border: '1px solid #cbd5e1',
-                tabSize: 4,
-              }}
-            />
+            <div style={{ border: '1px solid var(--border-input)', borderRadius: '6px', overflow: 'hidden' }}>
+              <AceEditor
+                mode={getAceMode(language)}
+                theme={isDark ? 'tomorrow_night' : 'github'}
+                name="oj-code-editor"
+                value={sourceCode}
+                onChange={(val) => setSourceCode(val)}
+                width="100%"
+                height="400px"
+                fontSize={14}
+                showPrintMargin={false}
+                showGutter={true}
+                highlightActiveLine={true}
+                setOptions={{
+                  enableBasicAutocompletion: true,
+                  enableLiveAutocompletion: true,
+                  showLineNumbers: true,
+                  tabSize: 4,
+                  useSoftTabs: true,
+                }}
+              />
+            </div>
 
             <div>
               <button
@@ -454,7 +484,7 @@ export default function ProblemDetailPage() {
             </div>
           </form>
 
-          {/* Hiển thị kết quả ngay sau khi nộp (Tôn trọng Yêu cầu 9: Ẩn toàn bộ quá trình chấm nếu bật OI Mode) */}
+          {/* Kết quả chấm real-time khớp 100% schema judge.cpp */}
           {latestSub && (
             <div
               style={{
@@ -467,30 +497,81 @@ export default function ProblemDetailPage() {
             >
               {shouldHideGrading ? (
                 <div style={{ color: '#2563eb', fontWeight: 'bold', fontSize: '14px' }}>
-                  📩 Đã ghi nhận bài nộp #{latestSub.id}! Toàn bộ quá trình và kết quả chấm (AC/WA) đang được ẩn theo quy chế Contest và sẽ tự động hiển thị sau khi hết giờ thi.
+                  📩 Đã ghi nhận bài nộp #{latestSub.id}! Toàn bộ quá trình và kết quả chấm đang được ẩn theo quy chế Contest và sẽ tự động hiển thị sau khi hết giờ thi.
                 </div>
               ) : (
-                <div>
+                <div style={{ display: 'grid', gap: '10px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
                     <span style={{ fontSize: '14px' }}>
-                      Bài nộp <b>#{latestSub.id}</b> — Trạng thái:{' '}
+                      Bài nộp <b>#{latestSub.id}</b> — Kết quả:{' '}
                       <b
                         style={{
                           color:
-                            latestSub.status === 'Accepted'
-                              ? '#16a34a'
-                              : latestSub.status === 'Pending' || latestSub.status === 'Judging'
+                            latestSub.status !== 'Finished'
                               ? '#2563eb'
+                              : latestSub.verdict === 'AC'
+                              ? '#16a34a'
                               : '#dc2626',
                         }}
                       >
-                        {latestSub.status}
+                        {latestSub.status !== 'Finished'
+                          ? `${latestSub.status}...`
+                          : latestSub.verdict || latestSub.status}
                       </b>
                     </span>
-                    <span style={{ fontSize: '13px', color: '#64748b' }}>
-                      Time: {latestSub.execution_time_ms ?? '-'} ms | Mem: {latestSub.memory_used_kb ?? '-'} KB
+                    <span style={{ fontSize: '13px', color: '#64748b', fontFamily: 'monospace' }}>
+                      Time: {latestSub.exec_time_ms ?? 0} ms | Mem: {latestSub.memory_kb ?? 0} KB
                     </span>
                   </div>
+
+                  {latestSub.verdict === 'CE' && latestSub.compile_message && (
+                    <pre
+                      style={{
+                        margin: 0,
+                        padding: '10px',
+                        borderRadius: '6px',
+                        backgroundColor: '#fef2f2',
+                        color: '#dc2626',
+                        fontSize: '12px',
+                        overflowX: 'auto',
+                      }}
+                    >
+                      {latestSub.compile_message}
+                    </pre>
+                  )}
+
+                  {testResults.length > 0 && (
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {testResults.map((tr: any, idx: number) => {
+                        const v = tr.verdict || 'G';
+                        const bg =
+                          v === 'AC'
+                            ? '#16a34a'
+                            : v === 'G'
+                            ? '#1e293b'
+                            : v === 'TLE'
+                            ? '#d97706'
+                            : '#dc2626';
+                        return (
+                          <span
+                            key={idx}
+                            title={`Test #${tr.test_num || idx + 1}: ${v} (${tr.time_ms ?? 0}ms)`}
+                            style={{
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              backgroundColor: bg,
+                              color: '#fff',
+                              fontSize: '12px',
+                              fontWeight: 'bold',
+                              fontFamily: 'monospace',
+                            }}
+                          >
+                            #{tr.test_num || idx + 1}: {v}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -498,7 +579,7 @@ export default function ProblemDetailPage() {
         </div>
       </div>
 
-      {/* ==================== CỘT PHẢI: SIDEBAR ĐIỀU HƯỚNG BÀI TRONG CONTEST (YÊU CẦU 7) ==================== */}
+      {/* CỘT PHẢI: SIDEBAR ĐIỀU HƯỚNG BÀI TRONG CONTEST */}
       {contest && (
         <aside
           style={{
@@ -512,7 +593,6 @@ export default function ProblemDetailPage() {
             gap: '14px',
           }}
         >
-          {/* Khung đồng hồ Contest giống VNOI */}
           <div
             style={{
               padding: '12px',
@@ -542,7 +622,6 @@ export default function ProblemDetailPage() {
             </div>
           </div>
 
-          {/* Danh sách điều hướng các bài đánh số 1, 2, 3... trong cùng Contest */}
           <div>
             <div
               style={{
