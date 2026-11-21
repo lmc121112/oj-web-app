@@ -1,129 +1,93 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { supabase } from '../lib/supabase';
 import './globals.css';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<{ id: number; username: string; role: string } | null>(null);
-  const [needInitAdmin, setNeedInitAdmin] = useState(false);
-  const [showLoginModal, setShowLoginModal] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
-
-  // Form state cho Đăng nhập & Tạo Admin lần đầu
-  const [usernameInput, setUsernameInput] = useState('');
-  const [passwordInput, setPasswordInput] = useState('');
-  const [authError, setAuthError] = useState('');
-  const [loadingAuth, setLoadingAuth] = useState(true);
+  const pathname = usePathname();
+  const [user, setUser] = useState<any>(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
 
   useEffect(() => {
-    // Khôi phục giao diện Sáng / Tối
-    const savedTheme = localStorage.getItem('oj_theme');
-    if (savedTheme === 'dark') {
-      setDarkMode(true);
-      document.documentElement.classList.add('dark');
+    // Dọn dẹp class/storage dark mode cũ nếu còn sót
+    document.documentElement.classList.remove('dark');
+    localStorage.removeItem('oj_theme');
+
+    const saved = localStorage.getItem('oj_user');
+    if (saved) {
+      try {
+        setUser(JSON.parse(saved));
+      } catch {}
     }
 
-    const checkSystem = async () => {
-      // 1. Kiểm tra xem hệ thống đã có tài khoản admin nào chưa
-      const { data: admins } = await supabase
-        .from('users')
-        .select('id')
-        .eq('role', 'admin')
-        .limit(1);
-
-      if (!admins || admins.length === 0) {
-        setNeedInitAdmin(true);
-      }
-
-      // 2. Khôi phục phiên đăng nhập từ localStorage
-      const saved = localStorage.getItem('oj_user');
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          const { data: dbUser } = await supabase
-            .from('users')
-            .select('id, username, role')
-            .eq('id', parsed.id)
-            .single();
-          if (dbUser) {
-            setUser(dbUser);
-            localStorage.setItem('oj_user', JSON.stringify(dbUser));
-          } else {
-            localStorage.removeItem('oj_user');
-          }
-        } catch {
-          localStorage.removeItem('oj_user');
-        }
-      }
-      setLoadingAuth(false);
+    const handleOpenModal = () => {
+      setAuthMode('login');
+      setShowAuthModal(true);
     };
-
-    checkSystem();
-
-    const openLoginHandler = () => {
-      setAuthError('');
-      setUsernameInput('');
-      setPasswordInput('');
-      setShowLoginModal(true);
-    };
-    window.addEventListener('open-login-modal', openLoginHandler);
-    return () => window.removeEventListener('open-login-modal', openLoginHandler);
+    window.addEventListener('open-login-modal', handleOpenModal);
+    return () => window.removeEventListener('open-login-modal', handleOpenModal);
   }, []);
 
-  const toggleDarkMode = () => {
-    const next = !darkMode;
-    setDarkMode(next);
-    if (next) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('oj_theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('oj_theme', 'light');
-    }
-  };
-
-  // Xử lý tạo tài khoản Admin mặc định lần đầu
-  const handleCreateDefaultAdmin = async (e: React.FormEvent) => {
+  const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAuthError('');
-    if (!usernameInput.trim() || !passwordInput.trim()) {
-      setAuthError('Vui lòng nhập đầy đủ tài khoản và mật khẩu.');
-      return;
-    }
-    const { data, error } = await supabase
-      .from('users')
-      .insert({ username: usernameInput.trim(), password: passwordInput.trim(), role: 'admin' })
-      .select('id, username, role')
-      .single();
+    const cleanUser = username.trim();
+    if (!cleanUser || !password) return;
+    setAuthLoading(true);
 
-    if (error) {
-      setAuthError('Lỗi khởi tạo Admin: ' + error.message);
-    } else if (data) {
-      setUser(data);
+    if (authMode === 'login') {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('username', cleanUser)
+        .eq('password', password)
+        .single();
+
+      setAuthLoading(false);
+      if (error || !data) {
+        alert('Sai tên đăng nhập hoặc mật khẩu!');
+        return;
+      }
       localStorage.setItem('oj_user', JSON.stringify(data));
-      setNeedInitAdmin(false);
+      setUser(data);
+      setShowAuthModal(false);
+      setUsername('');
+      setPassword('');
       window.location.reload();
-    }
-  };
-
-  // Xử lý đăng nhập
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError('');
-    const { data, error } = await supabase
-      .from('users')
-      .select('id, username, role')
-      .eq('username', usernameInput.trim())
-      .eq('password', passwordInput.trim())
-      .single();
-
-    if (error || !data) {
-      setAuthError('Sai tên đăng nhập hoặc mật khẩu!');
     } else {
-      setUser(data);
+      const { data: existing } = await supabase
+        .from('users')
+        .select('id')
+        .eq('username', cleanUser)
+        .maybeSingle();
+
+      if (existing) {
+        setAuthLoading(false);
+        alert('Tên đăng nhập đã tồn tại!');
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('users')
+        .insert({ username: cleanUser, password, role: 'user' })
+        .select('*')
+        .single();
+
+      setAuthLoading(false);
+      if (error || !data) {
+        alert('Lỗi đăng ký: ' + (error?.message || 'Không xác định'));
+        return;
+      }
       localStorage.setItem('oj_user', JSON.stringify(data));
-      setShowLoginModal(false);
+      setUser(data);
+      setShowAuthModal(false);
+      setUsername('');
+      setPassword('');
       window.location.reload();
     }
   };
@@ -131,88 +95,104 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const handleLogout = () => {
     localStorage.removeItem('oj_user');
     setUser(null);
-    window.location.href = '/';
+    window.location.reload();
   };
+
+  const navLinkStyle = (active: boolean): React.CSSProperties => ({
+    color: active ? '#ffffff' : '#cbd5e1',
+    textDecoration: 'none',
+    fontWeight: active ? 'bold' : 500,
+    padding: '6px 12px',
+    borderRadius: '6px',
+    backgroundColor: active ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
+    fontSize: '14px',
+  });
 
   return (
     <html lang="vi">
-      <body>
-        {/* Thanh điều hướng */}
-        <nav
+      <body style={{ backgroundColor: '#f8fafc', color: '#0f172a', minHeight: '100vh' }}>
+        <header
           style={{
-            backgroundColor: 'var(--bg-nav)',
+            backgroundColor: '#0f172a',
             color: '#fff',
             padding: '12px 24px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: '12px',
-            borderBottom: '1px solid #1e293b',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
           }}
         >
-          <div style={{ display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <Link href="/" style={{ color: '#fff', textDecoration: 'none', fontWeight: 'bold', fontSize: '18px' }}>
-              ⚡ Online Judge
-            </Link>
-            <Link href="/" style={{ color: '#cbd5e1', textDecoration: 'none', fontSize: '15px' }}>
-              Luyện tập tự do
-            </Link>
-            <Link href="/contests" style={{ color: '#cbd5e1', textDecoration: 'none', fontSize: '15px' }}>
-              Contest
-            </Link>
-            <Link href="/submissions" style={{ color: '#cbd5e1', textDecoration: 'none', fontSize: '15px' }}>
-              Bài nộp
-            </Link>
-            {user?.role === 'admin' && (
-              <Link href="/admin" style={{ color: '#fbbf24', fontWeight: 'bold', textDecoration: 'none', fontSize: '15px' }}>
-                ⚙ Quản trị Admin
+          <div
+            style={{
+              maxWidth: '1200px',
+              margin: '0 auto',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '12px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+              <Link
+                href="/"
+                style={{
+                  color: '#38bdf8',
+                  fontWeight: 'bold',
+                  fontSize: '18px',
+                  textDecoration: 'none',
+                  letterSpacing: '0.3px',
+                }}
+              >
+                ⚡ Online Judge
               </Link>
-            )}
-          </div>
 
-          {/* Góc trên bên phải: Dark Mode, Giờ hệ thống, Tài khoản */}
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <button
-              type="button"
-              onClick={toggleDarkMode}
-              title={darkMode ? 'Chuyển sang giao diện Sáng' : 'Chuyển sang giao diện Tối (Dark Mode)'}
-              style={{
-                backgroundColor: '#1e293b',
-                color: '#f8fafc',
-                border: '1px solid #334155',
-                padding: '5px 10px',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '13px',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
-              }}
-            >
-              {darkMode ? '☀️ Sáng' : '🌙 Tối'}
-            </button>
-
-            <span style={{ fontSize: '12px', color: '#94a3b8' }}>GMT+7 (Hà Nội)</span>
-
-            {!loadingAuth &&
-              (user ? (
-                <>
-                  <Link href="/account" style={{ color: '#38bdf8', textDecoration: 'none', fontSize: '14px', fontWeight: 500 }}>
-                    👤 {user.username} ({user.role})
+              <nav style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                <Link href="/" style={navLinkStyle(pathname === '/')}>
+                  Bài tập
+                </Link>
+                <Link href="/contests" style={navLinkStyle(pathname?.startsWith('/contests') ?? false)}>
+                  Kỳ thi (Contests)
+                </Link>
+                <Link href="/submissions" style={navLinkStyle(pathname === '/submissions')}>
+                  Các bài nộp
+                </Link>
+                {user?.role === 'admin' && (
+                  <Link href="/admin" style={navLinkStyle(pathname === '/admin')}>
+                    Quản trị (Admin)
                   </Link>
+                )}
+              </nav>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              {user ? (
+                <>
+                  <span style={{ fontSize: '13px', color: '#e2e8f0' }}>
+                    Xin chào, <b>{user.username}</b>{' '}
+                    {user.role === 'admin' && (
+                      <span
+                        style={{
+                          backgroundColor: '#dc2626',
+                          color: '#fff',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          fontSize: '11px',
+                          marginLeft: '4px',
+                        }}
+                      >
+                        ADMIN
+                      </span>
+                    )}
+                  </span>
                   <button
+                    type="button"
                     onClick={handleLogout}
                     style={{
-                      backgroundColor: '#ef4444',
+                      backgroundColor: '#334155',
                       color: '#fff',
                       border: 'none',
                       padding: '6px 12px',
                       borderRadius: '6px',
-                      cursor: 'pointer',
                       fontSize: '13px',
-                      fontWeight: 'bold',
+                      cursor: 'pointer',
                     }}
                   >
                     Đăng xuất
@@ -220,125 +200,160 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </>
               ) : (
                 <button
+                  type="button"
                   onClick={() => {
-                    setAuthError('');
-                    setUsernameInput('');
-                    setPasswordInput('');
-                    setShowLoginModal(true);
+                    setAuthMode('login');
+                    setShowAuthModal(true);
                   }}
                   style={{
                     backgroundColor: '#2563eb',
                     color: '#fff',
                     border: 'none',
-                    padding: '7px 16px',
+                    padding: '7px 14px',
                     borderRadius: '6px',
-                    cursor: 'pointer',
+                    fontSize: '13px',
                     fontWeight: 'bold',
-                    fontSize: '14px',
+                    cursor: 'pointer',
                   }}
                 >
-                  Đăng nhập
+                  Đăng nhập / Đăng ký
                 </button>
-              ))}
+              )}
+            </div>
           </div>
-        </nav>
+        </header>
 
-        {/* Nội dung chính */}
-        <main style={{ maxWidth: '1160px', margin: '24px auto', padding: '0 16px' }}>{children}</main>
+        <main style={{ maxWidth: '1200px', margin: '24px auto', padding: '0 16px' }}>
+          {children}
+        </main>
 
-        {/* Modal Bắt buộc tạo Admin lần đầu */}
-        {needInitAdmin && (
-          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-            <form
-              onSubmit={handleCreateDefaultAdmin}
+        {/* Modal Đăng nhập / Đăng ký */}
+        {showAuthModal && (
+          <div
+            onClick={() => setShowAuthModal(false)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 1000,
+              padding: '16px',
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
               style={{
-                backgroundColor: 'var(--bg-card)',
-                color: 'var(--text-main)',
-                padding: '28px',
-                borderRadius: '10px',
-                width: '380px',
-                border: '1px solid var(--border-color)',
-                boxShadow: '0 10px 25px rgba(0,0,0,0.4)',
-              }}
-            >
-              <h3 style={{ marginTop: 0, color: '#dc2626' }}>⚠ Khởi tạo Admin mặc định</h3>
-              <p style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
-                Hệ thống phát hiện chưa có tài khoản quản trị viên nào. Vui lòng tạo tài khoản <b>Admin</b> đầu tiên để vận hành Online Judge.
-              </p>
-              {authError && <p style={{ color: '#dc2626', fontSize: '13px' }}>{authError}</p>}
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>Tên đăng nhập Admin</label>
-                <input
-                  type="text"
-                  required
-                  value={usernameInput}
-                  onChange={(e) => setUsernameInput(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-input)' }}
-                />
-              </div>
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>Mật khẩu Admin</label>
-                <input
-                  type="password"
-                  required
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-input)' }}
-                />
-              </div>
-              <button type="submit" style={{ width: '100%', padding: '10px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
-                Tạo tài khoản Admin & Bắt đầu
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* Modal Đăng nhập */}
-        {showLoginModal && !needInitAdmin && (
-          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 999 }}>
-            <form
-              onSubmit={handleLogin}
-              style={{
-                backgroundColor: 'var(--bg-card)',
-                color: 'var(--text-main)',
+                backgroundColor: '#ffffff',
+                color: '#0f172a',
                 padding: '24px',
                 borderRadius: '10px',
-                width: '350px',
-                border: '1px solid var(--border-color)',
-                boxShadow: '0 10px 25px rgba(0,0,0,0.3)',
+                width: '100%',
+                maxWidth: '380px',
+                boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <h3 style={{ margin: 0 }}>Đăng nhập hệ thống</h3>
-                <button type="button" onClick={() => setShowLoginModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-main)', fontSize: '18px', cursor: 'pointer' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ margin: 0 }}>
+                  {authMode === 'login' ? 'Đăng nhập hệ thống' : 'Đăng ký tài khoản'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowAuthModal(false)}
+                  style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: '#64748b' }}
+                >
                   ✕
                 </button>
               </div>
-              {authError && <p style={{ color: '#dc2626', fontSize: '13px', margin: '0 0 10px 0' }}>{authError}</p>}
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>Tài khoản</label>
-                <input
-                  type="text"
-                  required
-                  value={usernameInput}
-                  onChange={(e) => setUsernameInput(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-input)' }}
-                />
+
+              <form onSubmit={handleAuthSubmit} style={{ display: 'grid', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>
+                    Tên đăng nhập
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid #cbd5e1',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>
+                    Mật khẩu
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid #cbd5e1',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={authLoading}
+                  style={{
+                    backgroundColor: '#2563eb',
+                    color: '#fff',
+                    border: 'none',
+                    padding: '10px',
+                    borderRadius: '6px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    marginTop: '4px',
+                  }}
+                >
+                  {authLoading
+                    ? 'Đang xử lý...'
+                    : authMode === 'login'
+                    ? 'Đăng nhập'
+                    : 'Tạo tài khoản'}
+                </button>
+              </form>
+
+              <div style={{ marginTop: '14px', textAlign: 'center', fontSize: '13px', color: '#64748b' }}>
+                {authMode === 'login' ? (
+                  <>
+                    Chưa có tài khoản?{' '}
+                    <button
+                      type="button"
+                      onClick={() => setAuthMode('register')}
+                      style={{ background: 'none', border: 'none', color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' }}
+                    >
+                      Đăng ký ngay
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    Đã có tài khoản?{' '}
+                    <button
+                      type="button"
+                      onClick={() => setAuthMode('login')}
+                      style={{ background: 'none', border: 'none', color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' }}
+                    >
+                      Đăng nhập
+                    </button>
+                  </>
+                )}
               </div>
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>Mật khẩu</label>
-                <input
-                  type="password"
-                  required
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-input)' }}
-                />
-              </div>
-              <button type="submit" style={{ width: '100%', padding: '10px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
-                Đăng nhập
-              </button>
-            </form>
+            </div>
           </div>
         )}
       </body>
