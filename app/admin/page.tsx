@@ -61,6 +61,15 @@ export default function AdminDashboardPage() {
   const [pHideTests, setPHideTests] = useState<boolean>(false);
   const [pHideGrading, setPHideGrading] = useState<boolean>(false);
 
+  // Modal nhân bản bài Luyện tập tự do vào Contest
+  const [cloneSourceProb, setCloneSourceProb] = useState<any>(null);
+  const [cloneTargetContestId, setCloneTargetContestId] = useState<string>('');
+  const [cloneNewProbId, setCloneNewProbId] = useState<string>('');
+  const [cloneOrder, setCloneOrder] = useState<number>(1);
+  const [cloneHideTests, setCloneHideTests] = useState<boolean>(false);
+  const [cloneHideGrading, setCloneHideGrading] = useState<boolean>(true);
+  const [isCloningToContest, setIsCloningToContest] = useState<boolean>(false);
+
   // Quản lý Test cases gắn liền với bài đang chọn
   const [selectedProbForTc, setSelectedProbForTc] = useState<string>('');
   const [tcList, setTcList] = useState<any[]>([]);
@@ -376,6 +385,128 @@ export default function AdminDashboardPage() {
       setTcList([]);
     }
     loadAllAdminData();
+  };
+
+  // --- MỞ MODAL & NHÂN BẢN BÀI LUYỆN TẬP TỰ DO VÀO CONTEST ---
+  const handleOpenCloneModal = (sourceProb: any) => {
+    if (contestsList.length === 0) {
+      alert('Chưa có Contest nào trong hệ thống! Vui lòng tạo Contest ở Tab 2 trước.');
+      return;
+    }
+    const defaultContest = contestsList[0].id;
+    const countInContest = problemsList.filter((item) => item.contest_id === defaultContest).length;
+
+    setCloneSourceProb(sourceProb);
+    setCloneTargetContestId(defaultContest);
+    setCloneNewProbId(`${defaultContest}_${sourceProb.id}`);
+    setCloneOrder(countInContest + 1);
+    setCloneHideTests(Boolean(sourceProb.hide_tests));
+    setCloneHideGrading(true);
+  };
+
+  const handleCloneTargetContestChange = (newContestId: string) => {
+    setCloneTargetContestId(newContestId);
+    if (cloneSourceProb) {
+      const countInContest = problemsList.filter((item) => item.contest_id === newContestId).length;
+      setCloneNewProbId(`${newContestId}_${cloneSourceProb.id}`);
+      setCloneOrder(countInContest + 1);
+    }
+  };
+
+  const handleConfirmCloneToContest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cloneSourceProb || !cloneTargetContestId) return;
+
+    const targetId = cloneNewProbId.trim();
+    if (!targetId) {
+      alert('Vui lòng nhập Mã bài trong Contest!');
+      return;
+    }
+
+    if (problemsList.some((item) => item.id === targetId)) {
+      alert(`Mã bài "${targetId}" đã tồn tại! Vui lòng nhập một mã bài khác cho Contest.`);
+      return;
+    }
+
+    // Chống trùng tên file .in/.out giữa 2 bài trong cùng 1 contest nếu bài nguồn dùng File I/O
+    if (cloneSourceProb.io_mode === 'file' && cloneSourceProb.io_filename) {
+      const conflictProb = problemsList.find(
+        (item) =>
+          item.contest_id === cloneTargetContestId &&
+          item.io_mode === 'file' &&
+          (item.io_filename || '').toLowerCase() === cloneSourceProb.io_filename.toLowerCase()
+      );
+      if (conflictProb) {
+        alert(
+          `Xung đột file trong Contest: Bài [${conflictProb.id}] "${conflictProb.title}" đang dùng tệp "${cloneSourceProb.io_filename}.in / .out". Vui lòng đổi tên file ở một trong hai bài trước khi nhân bản!`
+        );
+        return;
+      }
+    }
+
+    setIsCloningToContest(true);
+
+    // 1. Tạo bản sao bài tập gắn vào Contest đích (giữ nguyên tên, đề, giới hạn, kiểu I/O)
+    const { error: insertProbError } = await supabase.from('problems').insert({
+      id: targetId,
+      title: cloneSourceProb.title,
+      statement: cloneSourceProb.statement || '',
+      time_limit_ms: cloneSourceProb.time_limit_ms,
+      memory_limit_mb: cloneSourceProb.memory_limit_mb,
+      contest_id: cloneTargetContestId,
+      problem_order: Number(cloneOrder) || 1,
+      io_mode: cloneSourceProb.io_mode || 'stdio',
+      io_filename: cloneSourceProb.io_mode === 'file' ? cloneSourceProb.io_filename : '',
+      hide_tests: cloneHideTests,
+      hide_grading: cloneHideGrading,
+    });
+
+    if (insertProbError) {
+      setIsCloningToContest(false);
+      alert('Lỗi nhân bản đề bài vào Contest: ' + insertProbError.message);
+      return;
+    }
+
+    // 2. Lấy toàn bộ Test cases của bài Luyện tập tự do gốc và nhân bản sang bài mới
+    const { data: sourceTcs, error: fetchTcError } = await supabase
+      .from('test_cases')
+      .select('test_order, input_data, expected_output')
+      .eq('problem_id', cloneSourceProb.id)
+      .order('test_order', { ascending: true });
+
+    let copiedCount = 0;
+    if (!fetchTcError && sourceTcs && sourceTcs.length > 0) {
+      const clonedTcRows = sourceTcs.map((tc) => ({
+        problem_id: targetId,
+        test_order: tc.test_order,
+        input_data: tc.input_data,
+        expected_output: tc.expected_output,
+      }));
+      const { error: insertTcError } = await supabase.from('test_cases').insert(clonedTcRows);
+      if (insertTcError) {
+        setIsCloningToContest(false);
+        alert(
+          `Đã tạo đề bài [${targetId}] trong Contest nhưng lỗi khi sao chép Test cases: ${insertTcError.message}`
+        );
+        await loadAllAdminData();
+        return;
+      }
+      copiedCount = clonedTcRows.length;
+    }
+
+    setIsCloningToContest(false);
+    setCloneSourceProb(null);
+    setSelectedProbForTc(targetId);
+    await loadAllAdminData();
+    await loadTestCases(targetId);
+
+    alert(
+      `✅ Đã sao chép nguyên vẹn bài [${cloneSourceProb.id}] "${cloneSourceProb.title}" (kèm ${copiedCount} test cases & cấu hình ${
+        cloneSourceProb.io_mode === 'file'
+          ? `File ${cloneSourceProb.io_filename}.in/.out`
+          : 'stdin/stdout'
+      }) vào Contest "${cloneTargetContestId}" với mã [${targetId}]!`
+    );
   };
 
   // --- QUẢN LÝ TEST CASES ---
@@ -876,7 +1007,7 @@ export default function AdminDashboardPage() {
               </div>
             </div>
 
-            {/* Cấu hình kiểu Input / Output (Yêu cầu 8) */}
+            {/* Cấu hình kiểu Input / Output */}
             <div style={{ padding: '12px', backgroundColor: '#fff', borderRadius: '6px', border: '1px solid #cbd5e1', display: 'grid', gap: '10px' }}>
               <div style={{ display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap', fontSize: '14px' }}>
                 <b>Kiểu đọc / ghi dữ liệu:</b>
@@ -921,7 +1052,7 @@ export default function AdminDashboardPage() {
               )}
             </div>
 
-            {/* Các tùy chọn ẩn test & ẩn quá trình chấm (Yêu cầu 9) */}
+            {/* Các tùy chọn ẩn test & ẩn quá trình chấm */}
             <div style={{ display: 'grid', gap: '8px', fontSize: '14px' }}>
               <label style={{ fontWeight: 'bold', cursor: 'pointer' }}>
                 <input
@@ -975,6 +1106,7 @@ export default function AdminDashboardPage() {
               <tbody>
                 {problemsList.map((p) => {
                   const isSelected = selectedProbForTc === p.id;
+                  const isFreePractice = !p.contest_id;
                   return (
                     <tr
                       key={p.id}
@@ -997,7 +1129,17 @@ export default function AdminDashboardPage() {
                           ? '👁️‍🗨️ Ẩn chi tiết test'
                           : 'Công khai'}
                       </td>
-                      <td style={{ padding: '10px', textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                      <td style={{ padding: '10px', textAlign: 'right', display: 'flex', gap: '6px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        {isFreePractice && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenCloneModal(p)}
+                            title="Sao chép toàn bộ đề, giới hạn, kiểu I/O và test cases vào một Contest"
+                            style={{ backgroundColor: '#0d9488', color: '#fff', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                          >
+                            📋 Thêm vào Contest
+                          </button>
+                        )}
                         <button
                           onClick={() => handleEditProblemFill(p)}
                           style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
@@ -1017,6 +1159,144 @@ export default function AdminDashboardPage() {
               </tbody>
             </table>
           </div>
+
+          {/* MODAL THÊM BÀI LUYỆN TẬP TỰ DO VÀO CONTEST */}
+          {cloneSourceProb && (
+            <div
+              onClick={() => !isCloningToContest && setCloneSourceProb(null)}
+              style={{
+                position: 'fixed',
+                inset: 0,
+                backgroundColor: 'rgba(0,0,0,0.6)',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                zIndex: 1000,
+                padding: '16px',
+              }}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  backgroundColor: '#fff',
+                  color: '#0f172a',
+                  padding: '24px',
+                  borderRadius: '10px',
+                  width: '100%',
+                  maxWidth: '520px',
+                  boxShadow: '0 10px 25px rgba(0,0,0,0.25)',
+                }}
+              >
+                <h3 style={{ marginTop: 0, marginBottom: '8px' }}>
+                  📋 Thêm bài Luyện tập tự do vào Contest
+                </h3>
+                <p style={{ fontSize: '13px', color: '#475569', marginTop: 0, marginBottom: '14px', lineHeight: 1.5 }}>
+                  Hệ thống sẽ giữ nguyên bài gốc <code>[{cloneSourceProb.id}]</code> ở kho Luyện tập tự do và tạo một bản sao độc lập trong Contest với đầy đủ: <b>tên bài, đề bài, giới hạn ({cloneSourceProb.time_limit_ms}ms / {cloneSourceProb.memory_limit_mb}MB), kiểu I/O ({cloneSourceProb.io_mode === 'file' ? `${cloneSourceProb.io_filename}.in/.out` : 'stdin/stdout'}) và toàn bộ test cases</b>.
+                </p>
+
+                <form onSubmit={handleConfirmCloneToContest} style={{ display: 'grid', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>
+                      Chọn Contest đích:
+                    </label>
+                    <select
+                      value={cloneTargetContestId}
+                      onChange={(e) => handleCloneTargetContestChange(e.target.value)}
+                      style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                    >
+                      {contestsList.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.title} ({c.id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '10px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>
+                        Mã bài trong Contest (không trùng mã gốc):
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={cloneNewProbId}
+                        onChange={(e) => setCloneNewProbId(e.target.value)}
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontFamily: 'monospace' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>
+                        Thứ tự bài (STT):
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={cloneOrder}
+                        onChange={(e) => setCloneOrder(Number(e.target.value))}
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gap: '8px', padding: '10px 12px', backgroundColor: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '13px' }}>
+                    <b>Cấu hình áp dụng riêng trong Contest:</b>
+                    <label style={{ cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={cloneHideTests}
+                        onChange={(e) => setCloneHideTests(e.target.checked)}
+                      />{' '}
+                      Ẩn chi tiết Test case (không cho xem Input/Output mẫu)
+                    </label>
+                    <label style={{ cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={cloneHideGrading}
+                        onChange={(e) => setCloneHideGrading(e.target.checked)}
+                      />{' '}
+                      Ẩn toàn bộ quá trình chấm — Chế độ OI (chỉ hiện kết quả khi hết giờ Contest)
+                    </label>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' }}>
+                    <button
+                      type="button"
+                      disabled={isCloningToContest}
+                      onClick={() => setCloneSourceProb(null)}
+                      style={{
+                        backgroundColor: '#e2e8f0',
+                        color: '#0f172a',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '6px',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isCloningToContest}
+                      style={{
+                        backgroundColor: '#0d9488',
+                        color: '#fff',
+                        border: 'none',
+                        padding: '8px 18px',
+                        borderRadius: '6px',
+                        fontWeight: 'bold',
+                        cursor: isCloningToContest ? 'not-allowed' : 'pointer',
+                        opacity: isCloningToContest ? 0.7 : 1,
+                      }}
+                    >
+                      {isCloningToContest ? 'Đang sao chép...' : '✅ Xác nhận thêm vào Contest'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
 
           {/* PHẦN C: QUẢN LÝ TEST CASES NGAY TRÊN CÙNG TRANG */}
           <div style={{ borderTop: '2px solid #cbd5e1', paddingTop: '24px' }}>
