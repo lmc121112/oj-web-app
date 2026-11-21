@@ -53,6 +53,14 @@ function formatCountdown(ms: number) {
     : `${pad(hours)}:${pad(mins)}:${pad(secs)}`;
 }
 
+const DEFAULT_LANGUAGES = [
+  { language: 'cpp20', display_name: 'C++20 (GCC)', template_code: '' },
+  { language: 'python', display_name: 'Python 3', template_code: '' },
+  { language: 'java', display_name: 'Java', template_code: '' },
+  { language: 'csharp', display_name: 'C# (.NET 8)', template_code: '' },
+  { language: 'rust', display_name: 'Rust', template_code: '' },
+];
+
 export default function ProblemDetailPage() {
   const params = useParams();
   const problemId = decodeURIComponent(String(params?.id || ''));
@@ -89,25 +97,49 @@ export default function ProblemDetailPage() {
       setLoading(true);
       setLatestSub(null);
 
-      const [pRes, tplRes] = await Promise.all([
+      const [pRes, ltRes, ssRes] = await Promise.all([
         supabase.from('problems').select('*').eq('id', problemId).single(),
         supabase.from('language_templates').select('*').order('id', { ascending: true }),
+        supabase.from('system_settings').select('value').eq('key', 'code_templates').maybeSingle(),
       ]);
 
       const prob = pRes.data;
       setProblem(prob);
 
-      if (tplRes.data && tplRes.data.length > 0) {
-        setTemplates(tplRes.data);
-        const defaultTpl =
-          tplRes.data.find((t: any) => t.language === 'cpp20' || t.language === 'cpp') ||
-          tplRes.data[0];
+      // Ưu tiên lấy template toàn cục từ system_settings (do Admin lưu ở trang /account)
+      const adminCustomMap: Record<string, string> =
+        ssRes.data?.value && typeof ssRes.data.value === 'object' ? ssRes.data.value : {};
+
+      const baseList =
+        ltRes.data && ltRes.data.length > 0 ? ltRes.data : DEFAULT_LANGUAGES;
+
+      const mergedTemplates = baseList.map((item: any) => ({
+        ...item,
+        template_code: Object.prototype.hasOwnProperty.call(adminCustomMap, item.language)
+          ? adminCustomMap[item.language]
+          : item.template_code ?? '',
+      }));
+
+      // Bổ sung nếu trong system_settings có key ngôn ngữ chưa nằm trong baseList
+      for (const [langKey, codeVal] of Object.entries(adminCustomMap)) {
+        if (!mergedTemplates.some((t: any) => t.language === langKey)) {
+          mergedTemplates.push({
+            language: langKey,
+            display_name: langKey.toUpperCase(),
+            template_code: codeVal ?? '',
+          });
+        }
+      }
+
+      setTemplates(mergedTemplates);
+
+      const defaultTpl =
+        mergedTemplates.find((t: any) => t.language === 'cpp20' || t.language === 'cpp') ||
+        mergedTemplates[0];
+
+      if (defaultTpl) {
         setLanguage(defaultTpl.language);
-        setSourceCode(defaultTpl.template_code || '');
-      } else {
-        setSourceCode(
-          `#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    ios_base::sync_with_stdio(false);\n    cin.tie(nullptr);\n    \n    return 0;\n}\n`
-        );
+        setSourceCode(defaultTpl.template_code ?? '');
       }
 
       if (prob) {
@@ -174,7 +206,9 @@ export default function ProblemDetailPage() {
     setLanguage(newLang);
     const found = templates.find((t: any) => t.language === newLang);
     if (found) {
-      setSourceCode(found.template_code || '');
+      setSourceCode(found.template_code ?? '');
+    } else {
+      setSourceCode('');
     }
   };
 
@@ -409,21 +443,11 @@ export default function ProblemDetailPage() {
                 onChange={(e) => handleLanguageChange(e.target.value)}
                 style={{ padding: '7px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }}
               >
-                {templates.length > 0 ? (
-                  templates.map((t: any) => (
-                    <option key={t.language} value={t.language}>
-                      {t.display_name || t.language.toUpperCase()}
-                    </option>
-                  ))
-                ) : (
-                  <>
-                    <option value="cpp20">C++20 (GCC)</option>
-                    <option value="python">Python 3</option>
-                    <option value="java">Java</option>
-                    <option value="csharp">C# (.NET 8)</option>
-                    <option value="rust">Rust</option>
-                  </>
-                )}
+                {templates.map((t: any) => (
+                  <option key={t.language} value={t.language}>
+                    {t.display_name || t.language.toUpperCase()}
+                  </option>
+                ))}
               </select>
             </div>
 
