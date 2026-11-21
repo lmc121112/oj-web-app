@@ -126,9 +126,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '14px' }}>
             {user ? (
               <>
-                <span>
-                  Xin chào, <b>{user.username}</b>
-                </span>
+                <Link
+                  href="/profile"
+                  title="Bấm để đổi mật khẩu và chỉnh sửa template code"
+                  style={{
+                    color: '#f8fafc',
+                    textDecoration: 'none',
+                    padding: '5px 10px',
+                    borderRadius: '6px',
+                    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <span>👤 Xin chào,</span>
+                  <b style={{ color: '#93c5fd', textDecoration: 'underline' }}>{user.username}</b>
+                </Link>
                 <button
                   type="button"
                   onClick={handleLogout}
