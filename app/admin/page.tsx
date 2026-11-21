@@ -3,9 +3,28 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { formatGMT7, localGMT7ToISO, isoToLocalGMT7Input } from '../../lib/time';
 
+// Danh sách tên file dành riêng cho hệ thống chấm (tránh xung đột khi chạy File I/O)
+const RESERVED_IO_NAMES = new Set([
+  'input',
+  'output',
+  'stdin',
+  'stdout',
+  'stderr',
+  'main',
+  'solution',
+  'code',
+  'prog',
+  'a',
+  'box',
+  'meta',
+  'result',
+  'verdict',
+  'compile',
+]);
+
 export default function AdminDashboardPage() {
   const [user, setUser] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'users' | 'contests' | 'problems' | 'testcases' | 'danger'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'contests' | 'problems' | 'danger'>('users');
 
   // --- DỮ LIỆU CHUNG ---
   const [usersList, setUsersList] = useState<any[]>([]);
@@ -17,26 +36,32 @@ export default function AdminDashboardPage() {
   const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState<'user' | 'admin'>('user');
 
-  // --- TAB 2: CONTEST ---
+  // --- TAB 2: CONTEST (4 CHẾ ĐỘ ĐẶT GIỜ) ---
   const [cId, setCId] = useState('');
   const [cTitle, setCTitle] = useState('');
-  const [timeMode, setTimeMode] = useState<'end_datetime' | 'duration'>('end_datetime');
+  const [timeMode, setTimeMode] = useState<
+    'start_end' | 'start_duration' | 'now_end' | 'now_duration'
+  >('start_end');
   const [cStartLocal, setCStartLocal] = useState('');
   const [cEndLocal, setCEndLocal] = useState('');
   const [cDurationMins, setCDurationMins] = useState<number>(120);
   const [cRestrict, setCRestrict] = useState<boolean>(false);
   const [cAllowedUsers, setCAllowedUsers] = useState<string[]>([]);
 
-  // --- TAB 3: BÀI TẬP ---
+  // --- TAB 3: BÀI TẬP & TEST CASES (GỘP CHUNG) ---
   const [pId, setPId] = useState('');
   const [pTitle, setPTitle] = useState('');
   const [pStatement, setPStatement] = useState('');
   const [pTimeLimit, setPTimeLimit] = useState<number>(1000);
   const [pMemLimit, setPMemLimit] = useState<number>(256);
   const [pContestId, setPContestId] = useState<string>('');
+  const [pOrder, setPOrder] = useState<number>(1);
+  const [pIoMode, setPIoMode] = useState<'stdio' | 'file'>('stdio');
+  const [pIoFilename, setPIoFilename] = useState<string>('');
   const [pHideTests, setPHideTests] = useState<boolean>(false);
+  const [pHideGrading, setPHideGrading] = useState<boolean>(false);
 
-  // --- TAB 4: TEST CASES ---
+  // Quản lý Test cases gắn liền với bài đang chọn
   const [selectedProbForTc, setSelectedProbForTc] = useState<string>('');
   const [tcList, setTcList] = useState<any[]>([]);
   const [editingTcId, setEditingTcId] = useState<number | null>(null);
@@ -44,7 +69,7 @@ export default function AdminDashboardPage() {
   const [tcInput, setTcInput] = useState('');
   const [tcOutput, setTcOutput] = useState('');
 
-  // --- TAB 5: DANGER ZONE ---
+  // --- TAB 4: DANGER ZONE ---
   const [isResettingOj, setIsResettingOj] = useState(false);
 
   useEffect(() => {
@@ -64,7 +89,11 @@ export default function AdminDashboardPage() {
     const [uRes, cRes, pRes] = await Promise.all([
       supabase.from('users').select('*').order('id', { ascending: true }),
       supabase.from('contests').select('*').order('created_at', { ascending: false }),
-      supabase.from('problems').select('*').order('created_at', { ascending: true }),
+      supabase
+        .from('problems')
+        .select('*')
+        .order('problem_order', { ascending: true })
+        .order('created_at', { ascending: true }),
     ]);
     if (uRes.data) setUsersList(uRes.data);
     if (cRes.data) setContestsList(cRes.data);
@@ -140,7 +169,7 @@ export default function AdminDashboardPage() {
     loadAllAdminData();
   };
 
-  // ==================== HANDLERS TAB 2: CONTEST ====================
+  // ==================== HANDLERS TAB 2: CONTEST (4 CHẾ ĐỘ GIỜ) ====================
   const toggleAllowedUser = (uname: string) => {
     setCAllowedUsers((prev) =>
       prev.includes(uname) ? prev.filter((u) => u !== uname) : [...prev, uname]
@@ -149,23 +178,48 @@ export default function AdminDashboardPage() {
 
   const handleSaveContest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cId.trim() || !cTitle.trim() || !cStartLocal) {
-      alert('Vui lòng nhập Mã contest, Tên contest và Thời gian bắt đầu (GMT+7).');
+    if (!cId.trim() || !cTitle.trim()) {
+      alert('Vui lòng nhập Mã contest và Tên contest.');
       return;
     }
 
-    const startIso = localGMT7ToISO(cStartLocal);
+    let startIso = '';
     let endIso = '';
 
-    if (timeMode === 'end_datetime') {
+    if (timeMode === 'start_end') {
+      if (!cStartLocal || !cEndLocal) {
+        alert('Vui lòng chọn đầy đủ Thời gian bắt đầu và Thời gian kết thúc (GMT+7).');
+        return;
+      }
+      startIso = localGMT7ToISO(cStartLocal);
+      endIso = localGMT7ToISO(cEndLocal);
+    } else if (timeMode === 'start_duration') {
+      if (!cStartLocal || Number(cDurationMins) <= 0) {
+        alert('Vui lòng chọn Thời gian bắt đầu và Thời lượng làm bài hợp lệ.');
+        return;
+      }
+      startIso = localGMT7ToISO(cStartLocal);
+      endIso = new Date(new Date(startIso).getTime() + Number(cDurationMins) * 60000).toISOString();
+    } else if (timeMode === 'now_end') {
       if (!cEndLocal) {
         alert('Vui lòng chọn Thời gian kết thúc (GMT+7).');
         return;
       }
+      startIso = new Date().toISOString();
       endIso = localGMT7ToISO(cEndLocal);
-    } else {
-      const startMs = new Date(startIso).getTime();
-      endIso = new Date(startMs + Number(cDurationMins) * 60000).toISOString();
+    } else if (timeMode === 'now_duration') {
+      if (Number(cDurationMins) <= 0) {
+        alert('Vui lòng nhập Thời lượng làm bài lớn hơn 0 phút.');
+        return;
+      }
+      const now = new Date();
+      startIso = now.toISOString();
+      endIso = new Date(now.getTime() + Number(cDurationMins) * 60000).toISOString();
+    }
+
+    if (new Date(endIso).getTime() <= new Date(startIso).getTime()) {
+      alert('Thời gian kết thúc phải nằm sau Thời gian bắt đầu!');
+      return;
     }
 
     const { error } = await supabase.from('contests').upsert({
@@ -184,6 +238,7 @@ export default function AdminDashboardPage() {
       setCTitle('');
       setCStartLocal('');
       setCEndLocal('');
+      setCDurationMins(120);
       setCRestrict(false);
       setCAllowedUsers([]);
       loadAllAdminData();
@@ -193,7 +248,7 @@ export default function AdminDashboardPage() {
   const handleEditContestFill = (c: any) => {
     setCId(c.id);
     setCTitle(c.title);
-    setTimeMode('end_datetime');
+    setTimeMode('start_end');
     setCStartLocal(isoToLocalGMT7Input(c.start_time));
     setCEndLocal(isoToLocalGMT7Input(c.end_time));
     setCRestrict(c.restrict_users);
@@ -206,32 +261,91 @@ export default function AdminDashboardPage() {
     loadAllAdminData();
   };
 
-  // ==================== HANDLERS TAB 3: BÀI TẬP ====================
+  // ==================== HANDLERS TAB 3: BÀI TẬP & TEST CASES ====================
+  const resetProblemForm = () => {
+    setPId('');
+    setPTitle('');
+    setPStatement('');
+    setPTimeLimit(1000);
+    setPMemLimit(256);
+    setPContestId('');
+    setPOrder(problemsList.length + 1);
+    setPIoMode('stdio');
+    setPIoFilename('');
+    setPHideTests(false);
+    setPHideGrading(false);
+  };
+
   const handleSaveProblem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pId.trim() || !pTitle.trim()) return;
+    const cleanId = pId.trim();
+    if (!cleanId || !pTitle.trim()) return;
+
+    // Kiểm tra và chống xung đột File I/O (.in / .out)
+    let cleanIoFilename = '';
+    if (pIoMode === 'file') {
+      // Loại bỏ đuôi .in/.inp/.out/.ans nếu admin lỡ nhập kèm, chỉ giữ tên gốc
+      cleanIoFilename = pIoFilename
+        .trim()
+        .replace(/\.(in|inp|out|ans|txt)$/i, '');
+
+      if (!cleanIoFilename) {
+        alert('Vui lòng nhập Tên file Input/Output (ví dụ: CHINHPHUONG) khi chọn chế độ File (.in / .out)!');
+        return;
+      }
+
+      if (!/^[a-zA-Z0-9_-]+$/.test(cleanIoFilename)) {
+        alert('Tên file chỉ được chứa chữ cái không dấu, chữ số, dấu gạch dưới (_) hoặc gạch ngang (-)!');
+        return;
+      }
+
+      if (RESERVED_IO_NAMES.has(cleanIoFilename.toLowerCase())) {
+        alert(
+          `Xung đột hệ thống: Tên file "${cleanIoFilename}" trùng với tệp nội bộ của trình chấm (input, output, main, box...). Vui lòng đặt tên khác (ví dụ: ${cleanId.toUpperCase()})!`
+        );
+        return;
+      }
+
+      // Chống trùng tên file giữa 2 bài trong cùng 1 contest
+      if (pContestId) {
+        const conflictProb = problemsList.find(
+          (item) =>
+            item.id !== cleanId &&
+            item.contest_id === pContestId &&
+            item.io_mode === 'file' &&
+            (item.io_filename || '').toLowerCase() === cleanIoFilename.toLowerCase()
+        );
+        if (conflictProb) {
+          alert(
+            `Xung đột file trong Contest: Bài [${conflictProb.id}] "${conflictProb.title}" đang sử dụng tên file "${cleanIoFilename}.in / ${cleanIoFilename}.out". Vui lòng chọn tên file khác!`
+          );
+          return;
+        }
+      }
+    }
 
     const { error } = await supabase.from('problems').upsert({
-      id: pId.trim(),
+      id: cleanId,
       title: pTitle.trim(),
       statement: pStatement,
       time_limit_ms: Number(pTimeLimit),
       memory_limit_mb: Number(pMemLimit),
       contest_id: pContestId ? pContestId : null,
+      problem_order: Number(pOrder) || 1,
+      io_mode: pIoMode,
+      io_filename: pIoMode === 'file' ? cleanIoFilename : '',
       hide_tests: pHideTests,
+      hide_grading: pContestId ? pHideGrading : false, // Chỉ áp dụng khi bài thuộc contest
     });
 
-    if (error) alert('Lỗi lưu bài tập: ' + error.message);
-    else {
-      alert('Đã lưu bài tập!');
-      setPId('');
-      setPTitle('');
-      setPStatement('');
-      setPTimeLimit(1000);
-      setPMemLimit(256);
-      setPContestId('');
-      setPHideTests(false);
-      loadAllAdminData();
+    if (error) {
+      alert('Lỗi lưu bài tập: ' + error.message);
+    } else {
+      alert(`Đã lưu bài tập [${cleanId}]! Bạn có thể quản lý Test cases cho bài này ngay bên dưới.`);
+      setSelectedProbForTc(cleanId);
+      setEditingTcId(null);
+      await loadAllAdminData();
+      await loadTestCases(cleanId);
     }
   };
 
@@ -242,16 +356,29 @@ export default function AdminDashboardPage() {
     setPTimeLimit(p.time_limit_ms);
     setPMemLimit(p.memory_limit_mb);
     setPContestId(p.contest_id || '');
+    setPOrder(p.problem_order || 1);
+    setPIoMode(p.io_mode === 'file' ? 'file' : 'stdio');
+    setPIoFilename(p.io_filename || '');
     setPHideTests(Boolean(p.hide_tests));
+    setPHideGrading(Boolean(p.contest_id && p.hide_grading));
+
+    // Đồng bộ luôn sang khung quản lý Test cases ngay bên dưới
+    setSelectedProbForTc(p.id);
+    setEditingTcId(null);
+    loadTestCases(p.id);
   };
 
   const handleDeleteProblem = async (id: string) => {
     if (!confirm(`Xóa bài "${id}" và toàn bộ test case của bài này?`)) return;
     await supabase.from('problems').delete().eq('id', id);
+    if (selectedProbForTc === id) {
+      setSelectedProbForTc('');
+      setTcList([]);
+    }
     loadAllAdminData();
   };
 
-  // ==================== HANDLERS TAB 4: TEST CASES ====================
+  // --- QUẢN LÝ TEST CASES ---
   const handlePrepareNewTc = () => {
     setEditingTcId(null);
     setTcOrder(tcList.length + 1);
@@ -268,7 +395,7 @@ export default function AdminDashboardPage() {
 
   const handleSaveTestCase = async () => {
     if (!selectedProbForTc) {
-      alert('Vui lòng chọn bài tập trước!');
+      alert('Vui lòng chọn hoặc lưu bài tập trước khi thêm test case!');
       return;
     }
 
@@ -311,7 +438,6 @@ export default function AdminDashboardPage() {
     loadTestCases(selectedProbForTc);
   };
 
-  // Upload nhiều file .inp/.in và .out/.ans ghép cặp tự động
   const handleUploadTestFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0 || !selectedProbForTc) return;
@@ -351,14 +477,14 @@ export default function AdminDashboardPage() {
       const { error } = await supabase.from('test_cases').insert(rowsToInsert);
       if (error) alert('Lỗi upload test cases: ' + error.message);
       else {
-        alert(`Đã upload thành công ${rowsToInsert.length} test cases!`);
+        alert(`Đã upload thành công ${rowsToInsert.length} test cases vào bài [${selectedProbForTc}]!`);
         loadTestCases(selectedProbForTc);
       }
     }
     e.target.value = '';
   };
 
-  // ==================== HANDLER TAB 5: DANGER ZONE ====================
+  // ==================== HANDLER TAB 4: DANGER ZONE ====================
   const handleResetEntireOj = async () => {
     const confirmText = prompt(
       'CẢNH BÁO NGUY HIỂM: Thao tác này sẽ xóa vĩnh viễn toàn bộ tài khoản (kể cả Admin hiện tại), Contest, đề bài, lịch sử bài nộp và reset toàn bộ ID về 1.\n\nChỉ giữ lại đề bài + 2 test case của "aplusb" và template các ngôn ngữ lập trình.\n\nNhập chính xác chữ "RESET" để xác nhận:'
@@ -383,14 +509,13 @@ export default function AdminDashboardPage() {
     <div style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
       <h2 style={{ marginTop: 0 }}>Bảng Quản Trị Hệ Thống (Admin)</h2>
 
-      {/* Thanh chuyển Tab */}
+      {/* Thanh chuyển Tab (4 Tab gọn gàng) */}
       <div style={{ display: 'flex', gap: '8px', borderBottom: '2px solid #e2e8f0', paddingBottom: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
         {[
           { id: 'users', label: '1. Tài khoản (User/Admin)' },
           { id: 'contests', label: '2. Contest & Phân quyền' },
-          { id: 'problems', label: '3. Bài tập' },
-          { id: 'testcases', label: '4. Quản lý Test cases' },
-          { id: 'danger', label: '5. Danger Zone' },
+          { id: 'problems', label: '3. Bài tập & Test cases' },
+          { id: 'danger', label: '4. Danger Zone' },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -487,10 +612,10 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {/* ================= TAB 2: QUẢN LÝ CONTEST ================= */}
+      {/* ================= TAB 2: QUẢN LÝ CONTEST (4 CÁCH ĐẶT GIỜ) ================= */}
       {activeTab === 'contests' && (
         <div>
-          <form onSubmit={handleSaveContest} style={{ backgroundColor: '#f8fafc', padding: '18px', borderRadius: '8px', marginBottom: '24px', display: 'grid', gap: '12px' }}>
+          <form onSubmit={handleSaveContest} style={{ backgroundColor: '#f8fafc', padding: '18px', borderRadius: '8px', marginBottom: '24px', display: 'grid', gap: '14px', border: '1px solid #e2e8f0' }}>
             <h4 style={{ margin: 0 }}>Tạo / Cập nhật Contest (Múi giờ GMT+7 Hà Nội)</h4>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '10px' }}>
               <input
@@ -511,38 +636,64 @@ export default function AdminDashboardPage() {
               />
             </div>
 
-            {/* Yêu cầu 11: 2 cách đặt thời gian cho contest */}
-            <div style={{ display: 'flex', gap: '16px', alignItems: 'center', fontSize: '14px' }}>
-              <b>Cách đặt thời gian:</b>
-              <label>
-                <input
-                  type="radio"
-                  checked={timeMode === 'end_datetime'}
-                  onChange={() => setTimeMode('end_datetime')}
-                /> Cách 1: Ngày/giờ bắt đầu & kết thúc
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  checked={timeMode === 'duration'}
-                  onChange={() => setTimeMode('duration')}
-                /> Cách 2: Ngày/giờ bắt đầu & thời lượng làm bài (phút)
-              </label>
+            {/* 4 cách đặt thời gian cho contest */}
+            <div style={{ display: 'grid', gap: '8px', fontSize: '14px', padding: '12px', backgroundColor: '#fff', borderRadius: '6px', border: '1px solid #cbd5e1' }}>
+              <b>Chọn cách đặt thời gian (4 chế độ):</b>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '8px' }}>
+                <label style={{ cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    checked={timeMode === 'start_end'}
+                    onChange={() => setTimeMode('start_end')}
+                  />{' '}
+                  <b>Cách 1:</b> Đặt ngày/giờ bắt đầu & kết thúc
+                </label>
+                <label style={{ cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    checked={timeMode === 'start_duration'}
+                    onChange={() => setTimeMode('start_duration')}
+                  />{' '}
+                  <b>Cách 2:</b> Đặt ngày/giờ bắt đầu & thời lượng (phút)
+                </label>
+                <label style={{ cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    checked={timeMode === 'now_end'}
+                    onChange={() => setTimeMode('now_end')}
+                  />{' '}
+                  <b>Cách 3:</b> Bắt đầu ngay & đặt ngày/giờ kết thúc
+                </label>
+                <label style={{ cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    checked={timeMode === 'now_duration'}
+                    onChange={() => setTimeMode('now_duration')}
+                  />{' '}
+                  <b>Cách 4:</b> Bắt đầu ngay & đặt thời lượng (phút)
+                </label>
+              </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>Thời gian bắt đầu (GMT+7):</label>
-                <input
-                  type="datetime-local"
-                  required
-                  value={cStartLocal}
-                  onChange={(e) => setCStartLocal(e.target.value)}
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
-                />
-              </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+              {(timeMode === 'start_end' || timeMode === 'start_duration') ? (
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>Thời gian bắt đầu (GMT+7):</label>
+                  <input
+                    type="datetime-local"
+                    required
+                    value={cStartLocal}
+                    onChange={(e) => setCStartLocal(e.target.value)}
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                  />
+                </div>
+              ) : (
+                <div style={{ padding: '10px 12px', borderRadius: '6px', border: '1px dashed #16a34a', display: 'flex', alignItems: 'center', fontSize: '13px', color: '#16a34a', fontWeight: 'bold' }}>
+                  ⚡ Thời gian bắt đầu: Ngay lập tức khi bấm Lưu Contest
+                </div>
+              )}
 
-              {timeMode === 'end_datetime' ? (
+              {(timeMode === 'start_end' || timeMode === 'now_end') ? (
                 <div>
                   <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>Thời gian kết thúc (GMT+7):</label>
                   <input
@@ -550,7 +701,7 @@ export default function AdminDashboardPage() {
                     required
                     value={cEndLocal}
                     onChange={(e) => setCEndLocal(e.target.value)}
-                    style={{ width: '100%', boxSizing: 'border-box', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
                   />
                 </div>
               ) : (
@@ -562,7 +713,7 @@ export default function AdminDashboardPage() {
                     required
                     value={cDurationMins}
                     onChange={(e) => setCDurationMins(Number(e.target.value))}
-                    style={{ width: '100%', boxSizing: 'border-box', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
                   />
                 </div>
               )}
@@ -575,7 +726,8 @@ export default function AdminDashboardPage() {
                   type="checkbox"
                   checked={cRestrict}
                   onChange={(e) => setCRestrict(e.target.checked)}
-                /> Bật giới hạn thí sinh tham gia (Chỉ những user được chọn bên dưới mới vào được)
+                />{' '}
+                Bật giới hạn thí sinh tham gia (Chỉ những user được chọn bên dưới mới vào được)
               </label>
 
               {cRestrict && (
@@ -586,7 +738,8 @@ export default function AdminDashboardPage() {
                         type="checkbox"
                         checked={cAllowedUsers.includes(u.username)}
                         onChange={() => toggleAllowedUser(u.username)}
-                      /> {u.username}
+                      />{' '}
+                      {u.username}
                     </label>
                   ))}
                 </div>
@@ -632,11 +785,22 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {/* ================= TAB 3: QUẢN LÝ BÀI TẬP ================= */}
+      {/* ================= TAB 3: GỘP BÀI TẬP & QUẢN LÝ TEST CASES ================= */}
       {activeTab === 'problems' && (
         <div>
-          <form onSubmit={handleSaveProblem} style={{ backgroundColor: '#f8fafc', padding: '18px', borderRadius: '8px', marginBottom: '24px', display: 'grid', gap: '12px' }}>
-            <h4 style={{ margin: 0 }}>Thêm / Cập nhật Bài tập</h4>
+          {/* PHẦN A: FORM THÊM / SỬA ĐỀ BÀI */}
+          <form onSubmit={handleSaveProblem} style={{ backgroundColor: '#f8fafc', padding: '18px', borderRadius: '8px', marginBottom: '24px', display: 'grid', gap: '12px', border: '1px solid #e2e8f0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+              <h4 style={{ margin: 0 }}>Phần 1: Thêm / Cập nhật Đề bài</h4>
+              <button
+                type="button"
+                onClick={resetProblemForm}
+                style={{ backgroundColor: '#64748b', color: '#fff', border: 'none', padding: '5px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}
+              >
+                + Làm mới form (Tạo bài mới)
+              </button>
+            </div>
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '10px' }}>
               <input
                 type="text"
@@ -661,17 +825,17 @@ export default function AdminDashboardPage() {
               placeholder="Nội dung đề bài..."
               value={pStatement}
               onChange={(e) => setPStatement(e.target.value)}
-              style={{ width: '100%', boxSizing: 'border-box', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontFamily: 'inherit' }}
+              style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontFamily: 'inherit' }}
             />
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: '10px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
               <div>
                 <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Time Limit (ms):</label>
                 <input
                   type="number"
                   value={pTimeLimit}
                   onChange={(e) => setPTimeLimit(Number(e.target.value))}
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
                 />
               </div>
               <div>
@@ -680,15 +844,19 @@ export default function AdminDashboardPage() {
                   type="number"
                   value={pMemLimit}
                   onChange={(e) => setPMemLimit(Number(e.target.value))}
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
                 />
               </div>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Thuộc Contest (để trống nếu là Luyện tập tự do):</label>
+                <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Thuộc Contest:</label>
                 <select
                   value={pContestId}
-                  onChange={(e) => setPContestId(e.target.value)}
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setPContestId(val);
+                    if (!val) setPHideGrading(false); // Tự tắt ẩn quá trình chấm nếu là luyện tập tự do
+                  }}
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
                 >
                   <option value="">-- Luyện tập tự do --</option>
                   {contestsList.map((c) => (
@@ -696,15 +864,91 @@ export default function AdminDashboardPage() {
                   ))}
                 </select>
               </div>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Thứ tự bài (1, 2, 3...):</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={pOrder}
+                  onChange={(e) => setPOrder(Number(e.target.value))}
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                />
+              </div>
             </div>
 
-            <label style={{ fontSize: '14px', fontWeight: 'bold', cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={pHideTests}
-                onChange={(e) => setPHideTests(e.target.checked)}
-              /> Bật nút Hide Test (Ẩn Input/Output chi tiết khi thí sinh bấm vào ô màu)
-            </label>
+            {/* Cấu hình kiểu Input / Output (Yêu cầu 8) */}
+            <div style={{ padding: '12px', backgroundColor: '#fff', borderRadius: '6px', border: '1px solid #cbd5e1', display: 'grid', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap', fontSize: '14px' }}>
+                <b>Kiểu đọc / ghi dữ liệu:</b>
+                <label style={{ cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    checked={pIoMode === 'stdio'}
+                    onChange={() => setPIoMode('stdio')}
+                  />{' '}
+                  Luồng chuẩn (<code>stdin / stdout</code>)
+                </label>
+                <label style={{ cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    checked={pIoMode === 'file'}
+                    onChange={() => {
+                      setPIoMode('file');
+                      if (!pIoFilename && pId.trim()) {
+                        setPIoFilename(pId.trim().toUpperCase());
+                      }
+                    }}
+                  />{' '}
+                  Đọc / ghi tệp (<code>.in / .out</code>)
+                </label>
+              </div>
+
+              {pIoMode === 'file' && (
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 'bold' }}>Tên file (không kèm đuôi):</label>
+                  <input
+                    type="text"
+                    placeholder="VD: CHINHPHUONG"
+                    value={pIoFilename}
+                    onChange={(e) => setPIoFilename(e.target.value)}
+                    style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontFamily: 'monospace' }}
+                  />
+                  <span style={{ fontSize: '12px', color: '#64748b' }}>
+                    Hệ thống sẽ tự sinh cặp tệp: <code>{pIoFilename.trim().replace(/\.(in|inp|out|ans|txt)$/i, '') || 'TENBAI'}.in</code> &amp;{' '}
+                    <code>{pIoFilename.trim().replace(/\.(in|inp|out|ans|txt)$/i, '') || 'TENBAI'}.out</code> (đã bật chống xung đột tên file).
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Các tùy chọn ẩn test & ẩn quá trình chấm (Yêu cầu 9) */}
+            <div style={{ display: 'grid', gap: '8px', fontSize: '14px' }}>
+              <label style={{ fontWeight: 'bold', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={pHideTests}
+                  onChange={(e) => setPHideTests(e.target.checked)}
+                />{' '}
+                Ẩn chi tiết Test case (Thí sinh vẫn thấy màu AC/WA từng test nhưng không xem được Input/Output)
+              </label>
+
+              <label
+                style={{
+                  fontWeight: 'bold',
+                  cursor: pContestId ? 'pointer' : 'not-allowed',
+                  opacity: pContestId ? 1 : 0.55,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  disabled={!pContestId}
+                  checked={pHideGrading}
+                  onChange={(e) => setPHideGrading(e.target.checked)}
+                />{' '}
+                Ẩn toàn bộ quá trình chấm — Chế độ OI (Giấu sạch kết quả AC/WA trong lúc thi, chỉ công bố khi hết giờ Contest)
+                {!pContestId && <span style={{ fontWeight: 'normal', fontSize: '12px', marginLeft: '6px' }}>(Chỉ bật được khi bài thuộc Contest)</span>}
+              </label>
+            </div>
 
             <div>
               <button type="submit" style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '9px 20px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
@@ -713,181 +957,217 @@ export default function AdminDashboardPage() {
             </div>
           </form>
 
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
-            <thead>
-              <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
-                <th style={{ padding: '10px' }}>Mã bài</th>
-                <th style={{ padding: '10px' }}>Tên bài</th>
-                <th style={{ padding: '10px' }}>Phân loại</th>
-                <th style={{ padding: '10px' }}>Hide Test</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>Thao tác</th>
-              </tr>
-            </thead>
-            <tbody>
-              {problemsList.map((p) => (
-                <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                  <td style={{ padding: '10px', fontFamily: 'monospace', fontWeight: 'bold' }}>{p.id}</td>
-                  <td style={{ padding: '10px' }}>{p.title}</td>
-                  <td style={{ padding: '10px' }}>{p.contest_id ? `Contest: ${p.contest_id}` : 'Luyện tập tự do'}</td>
-                  <td style={{ padding: '10px' }}>{p.hide_tests ? 'Đang ẩn' : 'Công khai'}</td>
-                  <td style={{ padding: '10px', textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                    <button onClick={() => handleEditProblemFill(p)} style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Sửa</button>
-                    <button onClick={() => handleDeleteProblem(p.id)} style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Xóa</button>
-                  </td>
+          {/* PHẦN B: DANH SÁCH BÀI TẬP */}
+          <h4 style={{ marginBottom: '10px' }}>Phần 2: Danh sách Bài tập (Bấm &ldquo;Sửa &amp; Test&rdquo; để chỉnh đề hoặc nạp Test cases)</h4>
+          <div style={{ overflowX: 'auto', marginBottom: '32px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
+                  <th style={{ padding: '10px' }}>STT</th>
+                  <th style={{ padding: '10px' }}>Mã bài</th>
+                  <th style={{ padding: '10px' }}>Tên bài</th>
+                  <th style={{ padding: '10px' }}>Phân loại</th>
+                  <th style={{ padding: '10px' }}>Kiểu I/O</th>
+                  <th style={{ padding: '10px' }}>Chế độ ẩn</th>
+                  <th style={{ padding: '10px', textAlign: 'right' }}>Thao tác</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* ================= TAB 4: QUẢN LÝ TEST CASES (YÊU CẦU 9) ================= */}
-      {activeTab === 'testcases' && (
-        <div>
-          {/* Menu thả xuống chọn bài cần quản lý testcase */}
-          <div style={{ marginBottom: '20px', display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <label style={{ fontWeight: 'bold' }}>Chọn bài tập cần quản lý Test case:</label>
-            <select
-              value={selectedProbForTc}
-              onChange={(e) => {
-                setSelectedProbForTc(e.target.value);
-                setEditingTcId(null);
-                loadTestCases(e.target.value);
-              }}
-              style={{ padding: '8px 14px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', fontWeight: 'bold' }}
-            >
-              {problemsList.map((p) => (
-                <option key={p.id} value={p.id}>
-                  [{p.id}] {p.title}
-                </option>
-              ))}
-            </select>
+              </thead>
+              <tbody>
+                {problemsList.map((p) => {
+                  const isSelected = selectedProbForTc === p.id;
+                  return (
+                    <tr
+                      key={p.id}
+                      style={{
+                        borderBottom: '1px solid #f1f5f9',
+                        backgroundColor: isSelected ? 'rgba(37, 99, 235, 0.08)' : 'transparent',
+                      }}
+                    >
+                      <td style={{ padding: '10px' }}>#{p.problem_order || 1}</td>
+                      <td style={{ padding: '10px', fontFamily: 'monospace', fontWeight: 'bold' }}>{p.id}</td>
+                      <td style={{ padding: '10px' }}>{p.title}</td>
+                      <td style={{ padding: '10px' }}>{p.contest_id ? `Contest: ${p.contest_id}` : 'Luyện tập tự do'}</td>
+                      <td style={{ padding: '10px', fontFamily: 'monospace', fontSize: '12px' }}>
+                        {p.io_mode === 'file' ? `${p.io_filename}.in / .out` : 'stdin / stdout'}
+                      </td>
+                      <td style={{ padding: '10px', fontSize: '12px' }}>
+                        {p.hide_grading
+                          ? '🔒 Ẩn toàn bộ chấm (OI)'
+                          : p.hide_tests
+                          ? '👁️‍🗨️ Ẩn chi tiết test'
+                          : 'Công khai'}
+                      </td>
+                      <td style={{ padding: '10px', textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button
+                          onClick={() => handleEditProblemFill(p)}
+                          style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                        >
+                          Sửa &amp; Test
+                        </button>
+                        <button
+                          onClick={() => handleDeleteProblem(p.id)}
+                          style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                        >
+                          Xóa
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
 
-          {/* Bảng chỉnh sửa test (chỗ nhập liệu) với 2 nút ở trên và 1 nút ở dưới */}
-          <div style={{ backgroundColor: '#f8fafc', padding: '18px', borderRadius: '8px', border: '1px solid #cbd5e1', marginBottom: '24px' }}>
-            {/* Ở trên bảng chỉnh sửa test: 2 nút Thêm testcase & Upload testcase */}
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* PHẦN C: QUẢN LÝ TEST CASES NGAY TRÊN CÙNG TRANG */}
+          <div style={{ borderTop: '2px solid #cbd5e1', paddingTop: '24px' }}>
+            <div style={{ marginBottom: '16px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <h4 style={{ margin: 0 }}>Phần 3: Quản lý Test cases cho bài:</h4>
+              <select
+                value={selectedProbForTc}
+                onChange={(e) => {
+                  setSelectedProbForTc(e.target.value);
+                  setEditingTcId(null);
+                  loadTestCases(e.target.value);
+                }}
+                style={{ padding: '8px 14px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', fontWeight: 'bold' }}
+              >
+                {problemsList.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    [{p.id}] {p.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ backgroundColor: '#f8fafc', padding: '18px', borderRadius: '8px', border: '1px solid #cbd5e1', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={handlePrepareNewTc}
+                  style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
+                >
+                  + Thêm testcase
+                </button>
+
+                <label
+                  style={{
+                    backgroundColor: '#7c3aed',
+                    color: '#fff',
+                    padding: '8px 16px',
+                    borderRadius: '6px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                  }}
+                >
+                  📤 Upload testcase (.inp/.in &amp; .out/.ans)
+                  <input
+                    type="file"
+                    multiple
+                    accept=".inp,.in,.out,.ans,.txt"
+                    onChange={handleUploadTestFiles}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+
+                <span style={{ fontSize: '13px', color: '#475569' }}>
+                  {editingTcId ? `Đang sửa Test ID #${editingTcId}` : 'Chế độ: Nhập Testcase mới'}
+                </span>
+              </div>
+
+              <div style={{ marginBottom: '10px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 'bold', marginRight: '8px' }}>Thứ tự Test #:</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={tcOrder}
+                  onChange={(e) => setTcOrder(Number(e.target.value))}
+                  style={{ width: '80px', padding: '6px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>Input dữ liệu vào:</label>
+                  <textarea
+                    rows={5}
+                    value={tcInput}
+                    onChange={(e) => setTcInput(e.target.value)}
+                    placeholder="Nhập dữ liệu Input..."
+                    style={{ width: '100%', fontFamily: 'monospace', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>Expected Output (Đáp án chuẩn):</label>
+                  <textarea
+                    rows={5}
+                    value={tcOutput}
+                    onChange={(e) => setTcOutput(e.target.value)}
+                    placeholder="Nhập dữ liệu Output chuẩn..."
+                    style={{ width: '100%', fontFamily: 'monospace', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                  />
+                </div>
+              </div>
+
               <button
                 type="button"
-                onClick={handlePrepareNewTc}
-                style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
+                onClick={handleSaveTestCase}
+                style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '10px 24px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
               >
-                + Thêm testcase
+                Lưu testcase
               </button>
-
-              <label
-                style={{
-                  backgroundColor: '#7c3aed',
-                  color: '#fff',
-                  padding: '8px 16px',
-                  borderRadius: '6px',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                }}
-              >
-                📤 Upload testcase (.inp/.in & .out/.ans)
-                <input
-                  type="file"
-                  multiple
-                  accept=".inp,.in,.out,.ans,.txt"
-                  onChange={handleUploadTestFiles}
-                  style={{ display: 'none' }}
-                />
-              </label>
-
-              <span style={{ fontSize: '13px', color: '#475569' }}>
-                {editingTcId ? `Đang sửa Test ID #${editingTcId}` : 'Chế độ: Nhập Testcase mới'}
-              </span>
             </div>
 
-            <div style={{ marginBottom: '10px' }}>
-              <label style={{ fontSize: '13px', fontWeight: 'bold', marginRight: '8px' }}>Thứ tự Test #:</label>
-              <input
-                type="number"
-                min={1}
-                value={tcOrder}
-                onChange={(e) => setTcOrder(Number(e.target.value))}
-                style={{ width: '80px', padding: '6px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
-              />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>Input dữ liệu vào:</label>
-                <textarea
-                  rows={5}
-                  value={tcInput}
-                  onChange={(e) => setTcInput(e.target.value)}
-                  placeholder="Nhập dữ liệu Input..."
-                  style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'monospace', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', marginBottom: '4px' }}>Expected Output (Đáp án chuẩn):</label>
-                <textarea
-                  rows={5}
-                  value={tcOutput}
-                  onChange={(e) => setTcOutput(e.target.value)}
-                  placeholder="Nhập dữ liệu Output chuẩn..."
-                  style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'monospace', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
-                />
-              </div>
-            </div>
-
-            {/* Ở dưới bảng chỉnh sửa test: nút Lưu testcase */}
-            <button
-              type="button"
-              onClick={handleSaveTestCase}
-              style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '10px 24px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
-            >
-              Lưu testcase
-            </button>
-          </div>
-
-          {/* Bảng danh sách test case của bài đang chọn */}
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
-            <thead>
-              <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
-                <th style={{ padding: '10px' }}>Test #</th>
-                <th style={{ padding: '10px' }}>Input (Xem trước)</th>
-                <th style={{ padding: '10px' }}>Output chuẩn (Xem trước)</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>Thao tác</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tcList.map((tc) => (
-                <tr key={tc.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                  <td style={{ padding: '10px', fontWeight: 'bold' }}>Test #{tc.test_order}</td>
-                  <td style={{ padding: '10px', fontFamily: 'monospace', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {tc.input_data}
-                  </td>
-                  <td style={{ padding: '10px', fontFamily: 'monospace', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {tc.expected_output}
-                  </td>
-                  <td style={{ padding: '10px', textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                    <button
-                      onClick={() => handleEditTcFill(tc)}
-                      style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '5px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                    >
-                      Sửa
-                    </button>
-                    <button
-                      onClick={() => handleDeleteTestCase(tc.id)}
-                      style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '5px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                    >
-                      Xóa
-                    </button>
-                  </td>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
+                  <th style={{ padding: '10px' }}>Test #</th>
+                  <th style={{ padding: '10px' }}>Input (Xem trước)</th>
+                  <th style={{ padding: '10px' }}>Output chuẩn (Xem trước)</th>
+                  <th style={{ padding: '10px', textAlign: 'right' }}>Thao tác</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {tcList.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} style={{ padding: '16px', textAlign: 'center', color: '#64748b' }}>
+                      Bài tập này chưa có test case nào.
+                    </td>
+                  </tr>
+                ) : (
+                  tcList.map((tc) => (
+                    <tr key={tc.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '10px', fontWeight: 'bold' }}>Test #{tc.test_order}</td>
+                      <td style={{ padding: '10px', fontFamily: 'monospace', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {tc.input_data}
+                      </td>
+                      <td style={{ padding: '10px', fontFamily: 'monospace', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {tc.expected_output}
+                      </td>
+                      <td style={{ padding: '10px', textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button
+                          onClick={() => handleEditTcFill(tc)}
+                          style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '5px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                        >
+                          Sửa
+                        </button>
+                        <button
+                          onClick={() => handleDeleteTestCase(tc.id)}
+                          style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '5px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                        >
+                          Xóa
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
-      {/* ================= TAB 5: DANGER ZONE ================= */}
+      {/* ================= TAB 4: DANGER ZONE ================= */}
       {activeTab === 'danger' && (
         <div
           style={{
