@@ -313,6 +313,21 @@ export default function ProblemDetailPage() {
       return;
     }
 
+    // Chặn nộp bài nếu bài thuộc contest nhưng chưa mở hoặc đã hết giờ (trừ Admin)
+    if (problem.contest_id && user?.role !== 'admin') {
+      if (!contest) {
+        alert('Bài thi hiện chưa mở!');
+        return;
+      }
+      const now = Date.now();
+      const sMs = new Date(contest.start_time).getTime();
+      const eMs = new Date(contest.end_time).getTime();
+      if (now < sMs || now > eMs) {
+        alert('Bài thi hiện chưa mở hoặc đã hết thời gian nộp bài!');
+        return;
+      }
+    }
+
     setSubmitting(true);
     const { data, error } = await supabase
       .from('submissions')
@@ -389,13 +404,23 @@ export default function ProblemDetailPage() {
     );
   }
 
-  if (isContestUpcoming && !isAdmin) {
+  // Luôn khóa bài nếu bài thuộc contest nhưng chưa đến giờ mở hoặc đã hết giờ (trừ Admin)
+  if (problem.contest_id && !isAdmin && (!contest || isContestUpcoming || isContestEnded)) {
     return (
       <div style={{ background: '#fff', padding: '32px', borderRadius: '8px', textAlign: 'center' }}>
-        <h3 style={{ color: '#d97706', marginTop: 0 }}>⏳ Kỳ thi chưa bắt đầu</h3>
-        <p>Đề bài sẽ tự động mở sau: <b>{formatCountdown(contestStartMs - nowMs)}</b></p>
-        <Link href={`/contests/${contest.id}`} style={{ color: '#2563eb', fontWeight: 'bold' }}>
-          ← Quay về phòng chờ Contest
+        <h3 style={{ color: '#d97706', marginTop: 0 }}>🔒 Chưa mở</h3>
+        {isContestUpcoming && (
+          <p>
+            Kỳ thi chưa bắt đầu. Đề bài sẽ tự động mở sau: <b>{formatCountdown(contestStartMs - nowMs)}</b>
+          </p>
+        )}
+        {isContestEnded && (
+          <p style={{ color: '#64748b' }}>
+            Kỳ thi đã kết thúc nên đề bài này hiện đang khóa.
+          </p>
+        )}
+        <Link href={contest ? `/contests/${contest.id}` : '/contests'} style={{ color: '#2563eb', fontWeight: 'bold' }}>
+          ← Quay về trang Contest
         </Link>
       </div>
     );
