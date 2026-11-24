@@ -13,11 +13,11 @@ interface MathTextProps {
   inline?: boolean;
 }
 
-// Chuẩn hóa Markdown: tự thêm dòng trống trước bảng & xử lý <br> trong bảng
 function normalizeMarkdown(src: string): string {
-  // 1. Tự thêm dòng trống phía trước bảng GFM nếu dòng trước đó không rỗng và không phải dòng bảng
-  const lines = src.split('\n');
+  const clean = src.replace(/\r\n/g, '\n');
+  const lines = clean.split('\n');
   const out: string[] = [];
+
   for (let i = 0; i < lines.length; i++) {
     const cur = lines[i];
     const next = i + 1 < lines.length ? lines[i + 1] : '';
@@ -34,7 +34,6 @@ function normalizeMarkdown(src: string): string {
   return out.join('\n');
 }
 
-// Chuyển chuỗi chứa <br> thành các dòng React node trong ô bảng
 function renderCellWithBreaks(children: React.ReactNode): React.ReactNode {
   return React.Children.map(children, (child) => {
     if (typeof child === 'string' && /<br\s*\/?>/i.test(child)) {
@@ -61,6 +60,7 @@ export default function MathText({ text, content, inline = false }: MathTextProp
       className="oj-markdown-content"
       style={{
         display: inline ? 'inline' : 'block',
+        whiteSpace: 'normal',
         lineHeight: 1.7,
         fontSize: '15px',
         wordBreak: 'break-word',
