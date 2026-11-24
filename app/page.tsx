@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { supabase } from '../lib/supabase';
 
 export default function PracticeHomePage() {
+  const [user, setUser] = useState<any>(null);
   const [problems, setProblems] = useState<any[]>([]);
   const [solvedSet, setSolvedSet] = useState<Set<string>>(new Set());
   const [searchCode, setSearchCode] = useState('');
@@ -26,6 +27,7 @@ export default function PracticeHomePage() {
       if (saved) {
         try {
           const u = JSON.parse(saved);
+          setUser(u);
           const { data: acSubs } = await supabase
             .from('submissions')
             .select('problem_id')
@@ -61,7 +63,7 @@ export default function PracticeHomePage() {
           </p>
         </div>
 
-        {/* Ô tìm kiếm bài theo mã / tên (Yêu cầu 4) */}
+        {/* Ô tìm kiếm bài theo mã / tên */}
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <input
             type="text"
@@ -124,20 +126,30 @@ export default function PracticeHomePage() {
               ) : (
                 filteredProblems.map((p) => {
                   const isSolved = solvedSet.has(p.id);
+                  const canGuestAccess = Boolean(user) || p.id.toLowerCase() === 'aplusb';
+
                   return (
                     <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                       <td style={{ padding: '12px 10px', fontWeight: 'bold', color: isSolved ? '#16a34a' : '#94a3b8' }}>
                         {isSolved ? '✔ AC' : '—'}
                       </td>
                       <td style={{ padding: '12px 10px', fontFamily: 'monospace', fontWeight: 'bold' }}>
-                        <Link href={`/problem/${p.id}`} style={{ textDecoration: 'none', color: '#2563eb' }}>
-                          {p.id}
-                        </Link>
+                        {canGuestAccess ? (
+                          <Link href={`/problem/${p.id}`} style={{ textDecoration: 'none', color: '#2563eb' }}>
+                            {p.id}
+                          </Link>
+                        ) : (
+                          <span style={{ color: '#64748b' }}>{p.id}</span>
+                        )}
                       </td>
                       <td style={{ padding: '12px 10px', fontWeight: 600 }}>
-                        <Link href={`/problem/${p.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                          {p.title}
-                        </Link>
+                        {canGuestAccess ? (
+                          <Link href={`/problem/${p.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                            {p.title}
+                          </Link>
+                        ) : (
+                          <span>{p.title}</span>
+                        )}
                       </td>
                       <td style={{ padding: '12px 10px', fontFamily: 'monospace', fontSize: '12px', color: '#64748b' }}>
                         {p.io_mode === 'file' ? `${p.io_filename}.in / .out` : 'stdin / stdout'}
@@ -146,21 +158,40 @@ export default function PracticeHomePage() {
                         {p.time_limit_ms}ms / {p.memory_limit_mb}MB
                       </td>
                       <td style={{ padding: '12px 10px', textAlign: 'right' }}>
-                        <Link
-                          href={`/problem/${p.id}`}
-                          style={{
-                            display: 'inline-block',
-                            backgroundColor: '#2563eb',
-                            color: '#fff',
-                            padding: '6px 14px',
-                            borderRadius: '6px',
-                            textDecoration: 'none',
-                            fontSize: '13px',
-                            fontWeight: 'bold',
-                          }}
-                        >
-                          Làm bài →
-                        </Link>
+                        {canGuestAccess ? (
+                          <Link
+                            href={`/problem/${p.id}`}
+                            style={{
+                              display: 'inline-block',
+                              backgroundColor: '#2563eb',
+                              color: '#fff',
+                              padding: '6px 14px',
+                              borderRadius: '6px',
+                              textDecoration: 'none',
+                              fontSize: '13px',
+                              fontWeight: 'bold',
+                            }}
+                          >
+                            Làm bài →
+                          </Link>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => window.dispatchEvent(new Event('open-login-modal'))}
+                            style={{
+                              backgroundColor: '#f59e0b',
+                              color: '#fff',
+                              border: 'none',
+                              padding: '6px 14px',
+                              borderRadius: '6px',
+                              fontSize: '13px',
+                              fontWeight: 'bold',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            🔒 Đăng nhập
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
