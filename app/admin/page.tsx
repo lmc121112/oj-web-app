@@ -569,50 +569,107 @@ export default function AdminDashboardPage() {
     loadTestCases(selectedProbForTc);
   };
 
+  // --- UPLOAD TEST CASES THEO PHƯƠNG THỨC CHIA ĐỂ TRỊ (HỖ TRỢ 200+ TEST) ---
+  const insertTestChunkWithRetry = async (rows: any[], maxRetries = 3) => {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const { error } = await supabase.from('test_cases').insert(rows);
+      if (!error) return;
+      if (attempt === maxRetries) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
+    }
+  };
+
   const handleUploadTestFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0 || !selectedProbForTc) return;
 
-    const pairs: Record<string, { inp?: string; out?: string }> = {};
+    // 1. Gom nhóm tham chiếu File theo tên gốc (chưa đọc nội dung để tiết kiệm RAM)
+    const pairs: Record<string, { inpFile?: File; outFile?: File }> = {};
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const dotIdx = file.name.lastIndexOf('.');
       const baseName = dotIdx !== -1 ? file.name.substring(0, dotIdx) : file.name;
       const ext = dotIdx !== -1 ? file.name.substring(dotIdx + 1).toLowerCase() : '';
-      const text = await file.text();
 
       if (!pairs[baseName]) pairs[baseName] = {};
-      if (ext === 'inp' || ext === 'in') pairs[baseName].inp = text;
-      else if (ext === 'out' || ext === 'ans') pairs[baseName].out = text;
+      if (ext === 'inp' || ext === 'in') pairs[baseName].inpFile = file;
+      else if (ext === 'out' || ext === 'ans') pairs[baseName].outFile = file;
     }
 
-    const sortedKeys = Object.keys(pairs).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-    let currentOrder = tcList.length + 1;
-    const rowsToInsert: any[] = [];
+    const sortedKeys = Object.keys(pairs)
+      .filter((key) => pairs[key].inpFile !== undefined && pairs[key].outFile !== undefined)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
-    for (const key of sortedKeys) {
-      if (pairs[key].inp !== undefined && pairs[key].out !== undefined) {
-        rowsToInsert.push({
+    if (sortedKeys.length === 0) {
+      alert('Không tìm thấy cặp file hợp lệ! Hãy chọn đồng thời các cặp file trùng tên có đuôi .inp (hoặc .in) và .out (hoặc .ans).');
+      e.target.value = '';
+      return;
+    }
+
+    if (sortedKeys.length > 200) {
+      alert(`Bạn đang chọn ${sortedKeys.length} test cases (vượt mức tối đa 200 test/lần). Vui lòng chia tối đa 200 test mỗi lần chọn!`);
+      e.target.value = '';
+      return;
+    }
+
+    // 2. Chia để trị: Đọc cuốn chiếu & cắt lô theo số lượng (tối đa 10 test/lô) hoặc dung lượng (~1.2 MB/lô)
+    const MAX_TESTS_PER_CHUNK = 10;
+    const MAX_BYTES_PER_CHUNK = 1_200_000;
+
+    let currentOrder = tcList.length + 1;
+    let currentChunk: any[] = [];
+    let currentChunkBytes = 0;
+    let uploadedTotal = 0;
+
+    try {
+      for (const key of sortedKeys) {
+        const pair = pairs[key];
+        const [inpText, outText] = await Promise.all([
+          pair.inpFile!.text(),
+          pair.outFile!.text(),
+        ]);
+
+        const pairBytes = inpText.length + outText.length;
+
+        if (
+          currentChunk.length > 0 &&
+          (currentChunk.length >= MAX_TESTS_PER_CHUNK || currentChunkBytes + pairBytes > MAX_BYTES_PER_CHUNK)
+        ) {
+          await insertTestChunkWithRetry(currentChunk);
+          uploadedTotal += currentChunk.length;
+          currentChunk = [];
+          currentChunkBytes = 0;
+        }
+
+        currentChunk.push({
           problem_id: selectedProbForTc,
           test_order: currentOrder++,
-          input_data: pairs[key].inp,
-          expected_output: pairs[key].out,
+          input_data: inpText,
+          expected_output: outText,
         });
+        currentChunkBytes += pairBytes;
       }
-    }
 
-    if (rowsToInsert.length === 0) {
-      alert('Không tìm thấy cặp file hợp lệ! Hãy chọn đồng thời các cặp file trùng tên có đuôi .inp (hoặc .in) và .out (hoặc .ans).');
-    } else {
-      const { error } = await supabase.from('test_cases').insert(rowsToInsert);
-      if (error) alert('Lỗi upload test cases: ' + error.message);
-      else {
-        alert(`Đã upload thành công ${rowsToInsert.length} test cases vào bài [${selectedProbForTc}]!`);
+      if (currentChunk.length > 0) {
+        await insertTestChunkWithRetry(currentChunk);
+        uploadedTotal += currentChunk.length;
+      }
+
+      alert(`Đã upload thành công ${uploadedTotal} test cases vào bài [${selectedProbForTc}]!`);
+      loadTestCases(selectedProbForTc);
+    } catch (err: any) {
+      alert(
+        `Lỗi upload test cases (đã lưu được ${uploadedTotal}/${sortedKeys.length} test): ${
+          err?.message || 'Không xác định'
+        }`
+      );
+      if (uploadedTotal > 0) {
         loadTestCases(selectedProbForTc);
       }
+    } finally {
+      e.target.value = '';
     }
-    e.target.value = '';
   };
 
   // ==================== HANDLER TAB 4: DANGER ZONE ====================
