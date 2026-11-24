@@ -13,9 +13,48 @@ interface MathTextProps {
   inline?: boolean;
 }
 
+// Chuẩn hóa Markdown: tự thêm dòng trống trước bảng & xử lý <br> trong bảng
+function normalizeMarkdown(src: string): string {
+  // 1. Tự thêm dòng trống phía trước bảng GFM nếu dòng trước đó không rỗng và không phải dòng bảng
+  const lines = src.split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const cur = lines[i];
+    const next = i + 1 < lines.length ? lines[i + 1] : '';
+    const isTableHeader =
+      cur.trim().startsWith('|') &&
+      next.trim().startsWith('|') &&
+      /^[\s|:-]+$/.test(next.trim());
+
+    if (isTableHeader && out.length > 0 && out[out.length - 1].trim() !== '') {
+      out.push('');
+    }
+    out.push(cur);
+  }
+  return out.join('\n');
+}
+
+// Chuyển chuỗi chứa <br> thành các dòng React node trong ô bảng
+function renderCellWithBreaks(children: React.ReactNode): React.ReactNode {
+  return React.Children.map(children, (child) => {
+    if (typeof child === 'string' && /<br\s*\/?>/i.test(child)) {
+      const parts = child.split(/<br\s*\/?>/i);
+      return parts.map((part, idx) => (
+        <React.Fragment key={idx}>
+          {part}
+          {idx < parts.length - 1 && <br />}
+        </React.Fragment>
+      ));
+    }
+    return child;
+  });
+}
+
 export default function MathText({ text, content, inline = false }: MathTextProps) {
   const raw = text ?? content ?? '';
   if (!raw) return null;
+
+  const processed = inline ? raw : normalizeMarkdown(raw);
 
   return (
     <div
@@ -155,15 +194,17 @@ export default function MathText({ text, content, inline = false }: MathTextProp
                 fontWeight: 700,
               }}
             >
-              {children}
+              {renderCellWithBreaks(children)}
             </th>
           ),
           td: ({ children }) => (
-            <td style={{ border: '1px solid #cbd5e1', padding: '8px 12px' }}>{children}</td>
+            <td style={{ border: '1px solid #cbd5e1', padding: '8px 12px', verticalAlign: 'top' }}>
+              {renderCellWithBreaks(children)}
+            </td>
           ),
         }}
       >
-        {raw}
+        {processed}
       </ReactMarkdown>
     </div>
   );
