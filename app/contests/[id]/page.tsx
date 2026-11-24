@@ -156,6 +156,7 @@ export default function ContestRoomPage() {
   const isUpcoming = nowMs < startMs;
   const isRunning = nowMs >= startMs && nowMs <= endMs;
   const isEnded = nowMs > endMs;
+  const isLockedForUser = (isUpcoming || isEnded) && user?.role !== 'admin';
 
   return (
     <div style={{ display: 'grid', gap: '20px' }}>
@@ -226,11 +227,7 @@ export default function ContestRoomPage() {
       <div style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
         <h3 style={{ marginTop: 0, marginBottom: '14px' }}>Danh sách Bài thi ({problems.length} bài)</h3>
 
-        {isUpcoming && user?.role !== 'admin' ? (
-          <div style={{ padding: '24px', textAlign: 'center', backgroundColor: '#f8fafc', borderRadius: '8px', color: '#d97706', fontWeight: 'bold' }}>
-            ⏳ Kỳ thi chưa bắt đầu. Danh sách đề bài sẽ tự động mở khóa khi đồng hồ đếm ngược về 00:00:00!
-          </div>
-        ) : problems.length === 0 ? (
+        {problems.length === 0 ? (
           <p style={{ color: '#64748b' }}>Kỳ thi này chưa có bài tập nào.</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
@@ -273,14 +270,22 @@ export default function ContestRoomPage() {
                         )}
                       </td>
                       <td style={{ padding: '12px 10px', fontFamily: 'monospace', fontWeight: 'bold' }}>
-                        <Link href={`/problem/${p.id}`} style={{ textDecoration: 'none', color: '#2563eb' }}>
-                          {p.id}
-                        </Link>
+                        {isLockedForUser ? (
+                          <span style={{ color: '#64748b' }}>{p.id}</span>
+                        ) : (
+                          <Link href={`/problem/${p.id}`} style={{ textDecoration: 'none', color: '#2563eb' }}>
+                            {p.id}
+                          </Link>
+                        )}
                       </td>
                       <td style={{ padding: '12px 10px', fontWeight: 600 }}>
-                        <Link href={`/problem/${p.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                          {p.title}
-                        </Link>
+                        {isLockedForUser ? (
+                          <span style={{ color: '#64748b' }}>{p.title}</span>
+                        ) : (
+                          <Link href={`/problem/${p.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                            {p.title}
+                          </Link>
+                        )}
                       </td>
                       <td style={{ padding: '12px 10px', fontFamily: 'monospace', fontSize: '12px', color: '#64748b' }}>
                         {p.io_mode === 'file' ? `${p.io_filename}.in / .out` : 'stdin / stdout'}
@@ -289,21 +294,37 @@ export default function ContestRoomPage() {
                         {p.hide_grading ? '🔒 OI (Ẩn kết quả trong giờ)' : 'ICPC / Công khai'}
                       </td>
                       <td style={{ padding: '12px 10px', textAlign: 'right' }}>
-                        <Link
-                          href={`/problem/${p.id}`}
-                          style={{
-                            display: 'inline-block',
-                            backgroundColor: '#2563eb',
-                            color: '#fff',
-                            padding: '6px 14px',
-                            borderRadius: '6px',
-                            textDecoration: 'none',
-                            fontSize: '13px',
-                            fontWeight: 'bold',
-                          }}
-                        >
-                          Mở đề bài →
-                        </Link>
+                        {isLockedForUser ? (
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              backgroundColor: '#e2e8f0',
+                              color: '#64748b',
+                              padding: '6px 14px',
+                              borderRadius: '6px',
+                              fontSize: '13px',
+                              fontWeight: 'bold',
+                            }}
+                          >
+                            🔒 Chưa mở
+                          </span>
+                        ) : (
+                          <Link
+                            href={`/problem/${p.id}`}
+                            style={{
+                              display: 'inline-block',
+                              backgroundColor: '#2563eb',
+                              color: '#fff',
+                              padding: '6px 14px',
+                              borderRadius: '6px',
+                              textDecoration: 'none',
+                              fontSize: '13px',
+                              fontWeight: 'bold',
+                            }}
+                          >
+                            Mở đề bài →
+                          </Link>
+                        )}
                       </td>
                     </tr>
                   );
