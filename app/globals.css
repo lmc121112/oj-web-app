@@ -16,3 +16,29 @@ body {
   background-color: var(--bg-page);
   color: var(--text-main);
 }
+
+.oj-markdown-content .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 6px 0;
+  margin: 12px 0;
+}
+
+.oj-markdown-content .katex {
+  font-size: 1.05em;
+}
+
+.oj-markdown-content > *:first-child {
+  margin-top: 0;
+}
+
+.oj-markdown-content > *:last-child {
+  margin-bottom: 0;
+}
+
+.oj-markdown-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  margin: 10px 0;
+}
